@@ -22,7 +22,7 @@
     "shortDescription": "Design agent graphs and runnable Code Mode workflows",
     "longDescription": "Turn a free-form goal into a bounded agent graph and a matching paste-ready Codex Code Mode JavaScript workflow.",
     "developerName": "jnyross",
-    "category": "Developer Tools",
+    "category": "Engineering",
     "capabilities": [
       "Instructions"
     ],
