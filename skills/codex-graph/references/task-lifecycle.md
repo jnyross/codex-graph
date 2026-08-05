@@ -88,19 +88,51 @@ If the active wait implementation can return immediately or run indefinitely,
 add a task-specific deadline or polling strategy based on that observed
 behavior; do not copy a universal timeout or attempt count.
 
-For each attempt:
+For each collection round:
 
 1. Call the wait tool with the ready `threadId` and `hostId` when required.
-2. Read the newest task turn using `maxOutputCharsPerItem` or the active
-   tool's declared item limit, when one exists.
-3. Detect an explicit failed or interrupted terminal turn.
-4. Recursively inspect `turns` and their structured `items` for the required JSON handoff.
-5. Accept the handoff only when its `node_id`, status, and task-specific schema match.
-6. Continue while the task is active or the handoff is not terminal. Stop only
+2. Read the newest task turn with the tool's supported item limit. For the
+   current task-read declaration, use at most `20000` for
+   `maxOutputCharsPerItem`; never request a larger value unless the active
+   declaration explicitly allows it.
+3. Pass the returned pagination cursor (for example, `afterCursor`) into the
+   next read or wait call when the tool exposes one. A repeated snapshot with
+   no new cursor is not a new collection round and must not consume the
+   collection budget.
+4. Detect an explicit failed or interrupted terminal turn.
+5. Recursively inspect `turns` and their structured `items` for the required JSON handoff.
+6. Accept the handoff only when its `node_id`, status, and task-specific schema match.
+7. Continue while the task is active or the handoff is not terminal. Stop only
    at an active-tool failure, explicit terminal failure, or a task-specific
    deadline introduced for an observed operational need.
 
 Do not assume output is one text field. Do not treat an unchanged wait snapshot as failure.
+
+Use a cursor-aware bounded collector rather than repeating the same read:
+
+```javascript
+const MAX_OUTPUT_CHARS_PER_ITEM = 20000;
+let afterCursor;
+let collectionRounds = 0;
+
+while (collectionRounds < MAX_COLLECTION_ROUNDS) {
+  const snapshot = await waitThreads({
+    threadIds: [handle.thread_id],
+    afterCursor,
+    maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
+  });
+  const nextCursor = snapshot.afterCursor;
+  const hasNewData = nextCursor !== afterCursor || snapshot.items?.length > 0;
+  if (hasNewData) collectionRounds += 1;
+  afterCursor = nextCursor;
+  collectStructuredItems(snapshot.items);
+  if (hasTerminalHandoff(snapshot)) break;
+  if (!hasNewData) await new Promise((resolve) => setTimeout(resolve, COLLECTION_DELAY_MS));
+}
+```
+
+Adapt the argument names to the active declaration, but preserve both
+properties: carry the cursor forward and stay within the declared item limit.
 
 ## 4. Make handoffs fit before execution
 
