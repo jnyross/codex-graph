@@ -1,0 +1,19 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Windows regression suite
+        shell: pwsh
+        run: .\scripts\run_windows_regressions.ps1

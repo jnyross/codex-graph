@@ -44,6 +44,27 @@ If your Codex version does not support plugins, clone the repository and copy
 python3 skills/codex-graph/scripts/validate_skill.py
 ```
 
+On Windows, run the validator and task-collection regression suite from
+Codex Desktop's terminal:
+
+```powershell
+.\scripts\run_windows_regressions.ps1
+```
+
+The regression suite uses only Node's built-in test runner and simulates the
+active task tool. It covers cursor forwarding, cursorless snapshot
+deduplication, the 20,000-character item limit, delayed completion, bounded
+stall handling, and schema-valid terminal handoffs.
+
+## Add regression coverage with new features
+
+Every pull request runs the Windows suite automatically. When a feature
+changes orchestration behavior, add a scenario to
+`skills/codex-graph/scripts/task_collection_harness.test.js` before opening
+the pull request. The pull request template records the Windows command and
+requires either a named regression case or an explanation for a documentation-
+only change.
+
 ## Versioning and releases
 
 The product version is kept in `VERSION` and mirrored in
