@@ -1,6 +1,6 @@
 ---
 name: codex-graph
-description: "Design and build a runnable Codex Code Mode workflow from any free-form goal. Use when the user wants a Codex graph, graph-max or code-mode workflow, multi-agent DAG, parallel subagent plan, or paste-ready orchestration script. Always return two matched deliverables: first a human-readable graph design with Mermaid, node contracts, constraints, rationale, and references; second a complete raw-JavaScript Code Mode script that implements that graph with real available tools, bounded concurrency, explicit joins and gates, and at most one repair pass. Do not use when the user only wants Codex to perform the underlying task without a workflow-design artifact."
+description: "Design and build a runnable Codex Code Mode workflow from any free-form goal. Use when the user wants a Codex graph, graph-max or code-mode workflow, multi-agent DAG, parallel subagent plan, paste-ready orchestration script, or a bounded self-test of a generated workflow. Always return two matched deliverables: first a human-readable graph design with Mermaid, node contracts, constraints, rationale, and references; second a complete raw-JavaScript Code Mode script that implements that graph with real available tools, bounded concurrency, explicit joins and gates, and at most one repair pass. Do not use when the user only wants Codex to perform the underlying task without a workflow-design artifact."
 ---
 
 # Design a Codex graph and build its Code Mode script
@@ -23,6 +23,7 @@ The second part must contain real, complete JavaScript. Do not merely tell a lat
 5. Scope broad requests to the smallest coherent, useful slice. Name deferred work instead of silently expanding scope.
 6. When the goal concerns the current repository, inspect only high-signal context needed to tailor the workflow: applicable `AGENTS.md`, `README*`, manifests, test configuration, and directly named files. Do not perform the underlying audit or implementation.
 7. When the user supplies an existing graph, preserve its intended semantics and improve only what is required for executability, safety, or boundedness.
+8. If the user requests automated testing or self-improvement, activate the self-testing protocol in `references/self-testing.md`. Treat the generated skill as a candidate artifact and test it in an isolated child thread; do not recursively self-test the tester.
 
 ## Classify the goal
 
@@ -122,7 +123,7 @@ Workers must not merge, deploy, publish, perform approval-gated external actions
 
 ## Build Part 2: Code Mode Script
 
-Read `references/code-mode-script-patterns.md` before writing the script. When the graph creates visible Codex tasks or threads, also read `references/task-lifecycle.md` and implement its full lifecycle contract.
+Read `references/code-mode-script-patterns.md` before writing the script. When the graph creates visible Codex tasks or threads, also read `references/task-lifecycle.md` and implement its full lifecycle contract. When self-testing is active, also read `references/self-testing.md` and implement its candidate-bundle, child-thread, verdict, roadmap, and bounded repair contracts.
 
 Build a complete, goal-specific JavaScript program that implements Part 1 one-for-one. The script must be ready to paste into Codex Code Mode after removing the Markdown fence. It must not rely on Node.js APIs, local imports, `console`, direct filesystem access, or direct network access. Repository and external operations must go through tools available on the Code Mode `tools` object.
 
@@ -224,6 +225,22 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
 22. Keep all polling and operational retries visible through named constants and explicit maximums. A same-model capacity retry is separate from artifact repair and is allowed only when the graph declares one clean retry and forbids model substitution.
 23. Keep orchestration scaffolding temporary and separate from product code unless the user's goal explicitly requires it as a repository artifact.
 
+### Self-testing and self-improvement
+
+When self-testing is active, add the stages `T0` (freeze the acceptance contract and
+write the smallest candidate skill bundle), `T1` (launch one isolated child
+thread with that bundle), `T2` (collect the child terminal result and evidence),
+`G2` (accept only an explicit passing terminal result), and conditional `R2`
+(root-cause repair followed by one re-run). The child must not delegate, invoke
+self-testing, or perform irreversible actions. A completed thread is not a pass:
+the child must satisfy the candidate's declared acceptance criteria and return
+machine-readable evidence. Record a roadmap item for every observed issue or
+improvement, including its evidence and priority; do not invent roadmap items
+before the run. If the single repair and re-run fail, stop with `failed`, preserve
+the child handle and evidence, and return the roadmap for a later invocation.
+Self-testing is one bounded validation stage, not permission for an unbounded
+outer loop.
+
 ### Script result contract
 
 The final `text(...)` output must include:
@@ -245,6 +262,8 @@ The final `text(...)` output must include:
 - `repair_used: true|false`;
 - one repair allowance across all tiers;
 - any still-live handles, which should normally be empty.
+- self-test status, candidate bundle identity, child verdict/evidence, roadmap items,
+  and whether the bounded self-test repair was used when self-testing is active.
 
 Never claim success if acceptance evidence is missing.
 
@@ -329,6 +348,9 @@ Include these constraints in every design and encode the material ones in the sc
 - Prefer reversible assumptions for low-risk ambiguity. Stop before destructive or approval-gated work.
 - Preserve existing interfaces and conventions unless changing them is necessary.
 - Distinguish observed facts, source-backed claims, inferences, and unresolved unknowns.
+- When self-testing is active, package the exact candidate bundle sent to the child,
+  isolate writes in a worktree, forbid nested self-testing, and preserve the complete
+  child handle until collection is terminal.
 
 Add task-specific constraints when useful, such as backward compatibility, privacy, security, provenance, source freshness, accessibility, performance budgets, rollout safety, or no-production-access boundaries.
 
@@ -388,6 +410,7 @@ Before returning the paired deliverable, verify all of the following:
 - Integration ownership, fail-closed behavior, and the one-repair rule are encoded in code; concurrency caps are added only when justified by active tools or observations.
 - Validator decisions are machine-readable and malformed decisions fail closed.
 - Saved-project graphs resolve and preserve the exact project ID; read-only tasks use local and writing tasks use worktrees.
+- Self-testing freezes acceptance before the child starts, accepts only explicit child evidence, records observed roadmap items, and uses at most one root-cause repair and re-run.
 - Pending setup handles are retained and resolved; wait timeouts are checked against fresh task state.
 - Early-returning wait tools cannot consume the full collection budget in a tight loop.
 - Task reads respect the active tool's declared item limit and parse structured `items`.

@@ -7,6 +7,11 @@ A Codex skill that turns a free-form goal into two matched outputs:
 
 The skill includes field-tested rules for progressive minimal-first complexity, saved-project binding, pending task setup, structured task output, bounded handoffs, resumable checkpoints, audit fan-out, canonical schemas, and single-emission terminal results.
 
+It can also run a bounded self-test: package the generated workflow as a
+candidate skill, execute it once in an isolated child thread, collect explicit
+acceptance evidence, produce an observed improvement roadmap, and perform at
+most one evidence-led repair and re-run.
+
 ## Install as a Codex plugin
 
 Add this public repository as a plugin marketplace, then install the plugin:
@@ -66,6 +71,7 @@ backwards-compatible fixes.
 - `skills/codex-graph/agents/openai.yaml` — Codex skill metadata
 - `skills/codex-graph/references/` — topology, lifecycle, script, and source guidance
 - `skills/codex-graph/references/progressive-complexity.md` — authoritative L0-L4 escalation ladder
+- `skills/codex-graph/references/self-testing.md` — candidate packaging, child-thread validation, roadmap capture, and bounded repair
 - `skills/codex-graph/scripts/validate_skill.py` — structural and contract checks
 
 ## Status
