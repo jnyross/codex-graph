@@ -46,20 +46,30 @@ Also identify:
 - serialized decisions, writes, joins, approvals, and acceptance gates;
 - whether current official or community sources are needed.
 
-Read `references/topology-library.md` before choosing the topology. Use it as a pattern library, not boilerplate.
+Before choosing the topology, read `references/progressive-complexity.md` and
+`references/topology-library.md`. Select the baseline tier as the lowest tier
+whose observable goal-specific trigger is already provably true. Justify the
+choice by naming the fired trigger and its evidence. Escalation is default-off;
+anything unproven must be a named run-time escalation gate, not an up-front
+node.
 
 ## Design Part 1: Workflow Design
 
-Create a goal-specific directed acyclic workflow with a bounded, unrolled repair path.
+Create a goal-specific directed acyclic workflow with a bounded, unrolled repair
+path and a minimal baseline. Draw the baseline path first; add higher-tier
+stages only behind named escalation gates.
 
 Apply these rules:
 
-1. Use 4–10 meaningful nodes. Use fewer for a truly trivial task and more only when dependencies justify them.
+1. Use the fewest nodes required by the baseline tier. L0 and L1 graphs of 3-5 nodes are correct and expected. More nodes require a named fired trigger; wider graphs are not better.
 2. Give every node a stable short ID such as `N1`, `N2A`, or `V1`, plus a concrete goal-specific label.
-3. Parallelize only genuinely independent work. Prefer parallel read-heavy discovery, source gathering, reproduction, review, and validation.
+3. At L2, parallelize only genuinely independent read-only discovery. At L3,
+   parallelize independent validation lenses only after integration. Prefer
+   serialization at lower tiers.
 4. Serialize synthesis, decisions, overlapping writes, integration, approvals, and authority-bearing actions.
 5. Permit parallel implementation only when write scopes are demonstrably disjoint. Assign explicit file or component boundaries.
-6. Use no more than four concurrent workers and one delegation level. Never create nested swarms.
+6. When L2 or a higher tier is active, use no more than four concurrent
+   workers and one delegation level. Never create nested swarms.
 7. Give the root orchestrator sole ownership of decomposition, integration, acceptance decisions, and the final report.
 8. Include exactly one possible repair pass, unrolled in the graph:
    - initial validation;
@@ -83,6 +93,8 @@ For each substantive node, specify:
 - **Required output**
 - **Completion evidence**
 - **Failure behavior**
+- **Tier**
+- **Activation condition** — use `always active at baseline` for baseline nodes.
 
 Each worker handoff should be compact and structured. Require, as applicable:
 
@@ -104,6 +116,12 @@ Read `references/code-mode-script-patterns.md` before writing the script. When t
 
 Build a complete, goal-specific JavaScript program that implements Part 1 one-for-one. The script must be ready to paste into Codex Code Mode after removing the Markdown fence. It must not rely on Node.js APIs, local imports, `console`, direct filesystem access, or direct network access. Repository and external operations must go through tools available on the Code Mode `tools` object.
 
+The script's `WORKFLOW` metadata must declare `P1`, the escalation gates,
+trigger IDs, thresholds, deterministic action mappings, `ESCALATION_CAP = 2`,
+and the one-repair invariant. `P1` must emit and validate verdict objects in
+the declared shape; malformed or missing verdicts fail closed. The terminal
+result must preserve every verdict and the action taken, including `none`.
+
 ### Runtime and tool binding
 
 Code Mode tool availability and names can vary by client, version, configuration, and namespace. Therefore:
@@ -118,6 +136,18 @@ Code Mode tool availability and names can vary by client, version, configuration
 8. When the goal belongs to a saved Codex project, resolve its exact path through the project-list tool before task creation. Use the saved project with a local environment for a strictly read-only graph and isolated worktrees for any graph that can write. Use a projectless target only when no saved project applies or the user explicitly requests it.
 
 ### Graph-to-script parity
+
+Draw the baseline path as the primary flow. Draw higher-tier stages as
+conditional stages behind explicit named escalation gates such as
+`E1{Escalate to L2?}`. Every declared node maps one-to-one to a script stage,
+gate, or terminal. Non-activated nodes are reported as skipped, not omitted.
+Every baseline graph includes cheap escalation probe node `P1` followed by the
+named gate `E1{Escalate?}`. `P1` evaluates every predeclared trigger and emits
+machine-readable verdicts with IDs, measured values, thresholds, evidence, and
+actions. A malformed or missing verdict fails closed and cannot promote.
+The `WORKFLOW` metadata must include the baseline tier, each node's tier and
+activation condition, trigger definitions, the escalation cap, and the
+invariant that the repair allowance stays one across all tiers.
 
 The script must contain a compact `WORKFLOW` object or equivalent metadata with:
 
@@ -148,15 +178,15 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
 9. Read task results through their structured turns and `items`. Respect every declared read limit; keep `maxOutputCharsPerItem` at or below 20,000 unless the active schema gives a lower limit. Do not assume the result is one flat text field.
 10. Require complete JSON handoffs that fit a conservative worker-output budget. Treat the handoff as an index into preserved evidence, not as the only evidence store. Put overflow in an expansion queue or an approved durable artifact with stable IDs, locators, and a hash. Never repair payload size by slicing serialized JSON, replacing evidence with unexplained aliases, or dropping decisive evidence.
 11. Define accepted transport shapes and deterministic adapters before execution. Normalize a schema-declared equivalent shape, such as a shard object containing `record_ids`, to the canonical internal form before cardinality and field validation. Do not reject a semantically complete handoff only because its declared wrapper differs, and do not use permissive guessing for undeclared shapes.
-12. Support explicit checkpoints and resume handles for long task graphs. A checkpoint separates `complete`, `active`, and `not_started` nodes. Reuse complete handoffs, validate and collect active handles, and create not-started nodes normally when their dependencies pass. Never require a resume handle for a node that has not started.
+12. At L4, support explicit checkpoints and resume handles for long task graphs. A checkpoint separates `complete`, `active`, and `not_started` nodes. Reuse complete handoffs, validate and collect active handles, and create not-started nodes normally when their dependencies pass. Never require a resume handle for a node that has not started.
 13. Build one terminal result and emit it exactly once with a `terminalEmitted` guard. Do not call `exit()` inside a catchable orchestration block; an exit signal can be caught and cause a second terminal result.
 14. Include per-node start or collection errors and every still-live handle when the workflow blocks.
 15. Give workers self-contained prompts containing the goal, node contract, allowed scope, dependencies, required handoff schema, output budget, and prohibition on nested delegation.
 16. Use one integration owner. Pass upstream handoffs to it in a bounded, clearly labelled form.
-17. Fan out validation when independent record batches or audit lenses exist. Join their machine-readable decisions at one root-owned acceptance gate; no validator can approve the whole artifact alone.
+17. At L3, fan out validation when independent record batches or audit lenses exist. Join their machine-readable decisions at one root-owned acceptance gate; no validator can approve the whole artifact alone.
 18. Require each validator to return machine-readable JSON with `pass` or `repair`, failed criteria, affected IDs, evidence, and repair instructions. Each failed criterion must cite the declared acceptance-contract ID. Reject criteria, cutoffs, or scope additions that were not declared before execution.
 19. Implement the repair path as a single `if` block, not a loop. Set and report `repairUsed` explicitly.
-20. If initial validation requests repair, execute exactly one logical repair stage. For many defective records, that stage may fan out bounded record-specific corrections, but one serial repair owner must normalize every correction to the canonical schema and integrate them once. Repair instructions must stay inside the fixed scope and acceptance contract. Re-run the affected audit lanes plus any changed global invariant. If revalidation does not pass, stop with evidence.
+20. If initial validation requests repair, execute exactly one logical repair stage. At L4, many defective records may fan out bounded record-specific corrections, but one serial repair owner must normalize every correction to the canonical schema and integrate them once. Repair instructions must stay inside the fixed scope and acceptance contract. Re-run the affected audit lanes plus any changed global invariant. If revalidation does not pass, stop with evidence.
 21. Keep all polling and operational retries visible through named constants and explicit maximums. A same-model capacity retry is separate from artifact repair and is allowed only when the graph declares one clean retry and forbids model substitution.
 22. Keep orchestration scaffolding temporary and separate from product code unless the user's goal explicitly requires it as a repository artifact.
 
@@ -165,6 +195,11 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
 The final `text(...)` output must include:
 
 - terminal status: `passed`, `blocked`, or `failed`;
+- tier reached and baseline tier;
+- every trigger's ID, threshold, measured value, evidence, fired verdict, and
+  resulting action;
+- escalations used versus the escalation cap;
+- tiers and nodes not activated, reported as skipped;
 - objective and completed scope;
 - executed node IDs and skipped conditional nodes;
 - compact worker handoffs or references to preserved artifacts;
@@ -174,6 +209,7 @@ The final `text(...)` output must include:
 - assumptions and deviations;
 - unresolved risks or blockers;
 - `repair_used: true|false`;
+- one repair allowance across all tiers;
 - any still-live handles, which should normally be empty.
 
 Never claim success if acceptance evidence is missing.
@@ -203,24 +239,28 @@ Use this exact top-level order:
 2. `## Objective`
 3. `## Known context and assumptions`
 4. `## Success criteria`
-5. `## Workflow graph`
-6. `## Node contracts`
-7. `## Constraints and guardrails`
-8. `## Rationale`
-9. `## References & Links`
-10. `# Part 2 — Code Mode Script`
-11. `## Execution instruction`
-12. `## Runtime and tool bindings`
-13. `## Script`
-14. `## How to run`
-15. `## Direct-subagent fallback`
-16. `## Expected terminal output`
+5. `## Complexity ladder`
+6. `## Workflow graph`
+7. `## Node contracts`
+8. `## Constraints and guardrails`
+9. `## Rationale`
+10. `## References & Links`
+11. `# Part 2 — Code Mode Script`
+12. `## Execution instruction`
+13. `## Runtime and tool bindings`
+14. `## Script`
+15. `## How to run`
+16. `## Direct-subagent fallback`
+17. `## Expected terminal output`
 
 Under `## Execution instruction`, include the following sentence exactly once, as its own paragraph, preserving capitalization, hyphenation, punctuation, and ellipsis:
 
 Write a code-mode script that implements this exact workflow and run it…
 
 Immediately clarify that the complete script below is the implementation: Codex should submit its raw JavaScript body to Code Mode and run it without redesigning the graph. The sentence is required even though the script has already been built.
+
+Under `## Complexity ladder`, document the baseline tier, the fired trigger and
+evidence, deferred tiers with their triggers, and the escalation cap.
 
 Under `## Script`, include one fenced `javascript` block containing the complete program. Markdown fences are for presentation only and must not be included when the raw program is submitted to Code Mode.
 
@@ -237,11 +277,11 @@ Include these constraints in every design and encode the material ones in the sc
 - Read applicable `AGENTS.md` files and relevant installed skills before acting.
 - Keep the change or artifact as small as possible while satisfying the goal.
 - Avoid unrelated refactors and speculative abstractions, services, databases, schedulers, frameworks, or dependencies.
-- Use no more than four concurrent workers and no nested delegation.
-- Parallel workers are read-only by default. Concurrent writes require explicit non-overlapping scopes.
+- Use no more than four concurrent workers when L2-L4 is active and no nested delegation.
+- Parallel workers are read-only by default and only active at their tier. Concurrent writes require explicit non-overlapping scopes.
 - Use one integration owner; workers return structured handoffs.
 - Run targeted validation first, followed by only the smallest broader check justified by risk.
-- Allow at most one repair pass. Failed revalidation ends the workflow.
+- Allow exactly one repair allowance across all tiers. Failed revalidation ends the workflow.
 - Do not claim an action, command, test, source check, or external operation happened unless observed.
 - Do not expose secrets or sensitive values in prompts, logs, scripts, artifacts, or reports.
 - Do not commit, push, merge, deploy, publish, send messages, make purchases, alter bookings, or take other irreversible external actions without explicit authorization.
@@ -273,6 +313,15 @@ References are inputs, not proof they were consulted during execution. Worker pr
 Before returning the paired deliverable, verify all of the following:
 
 - Both Part 1 and Part 2 are present in the required order.
+- The baseline is the lowest justified tier and the fired trigger is named.
+- Every non-baseline node has a fired or gated trigger.
+- Trigger IDs and thresholds are declared before execution and escalation
+  actions map deterministically to named stages.
+- The baseline graph and script include probe node `P1`; malformed verdicts
+  fail closed.
+- Escalation is bounded, cannot exceed its cap, and never demotes.
+- One repair allowance is used regardless of tier.
+- Skipped tiers and nodes are reported.
 - Part 1 is tailored to the actual goal and preserves user constraints.
 - The Mermaid graph is readable, syntactically plausible, and uses unique stable node IDs.
 - Parallel branches are independent; overlapping writes are serialized.

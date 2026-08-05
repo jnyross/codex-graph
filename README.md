@@ -5,7 +5,7 @@ A Codex skill that turns a free-form goal into two matched outputs:
 1. a human-readable agent workflow with explicit nodes, joins, gates, and one bounded repair stage;
 2. a complete paste-ready JavaScript program for Codex Code Mode.
 
-The skill includes field-tested rules for saved-project binding, pending task setup, structured task output, bounded handoffs, resumable checkpoints, audit fan-out, canonical schemas, and single-emission terminal results.
+The skill includes field-tested rules for progressive minimal-first complexity, saved-project binding, pending task setup, structured task output, bounded handoffs, resumable checkpoints, audit fan-out, canonical schemas, and single-emission terminal results.
 
 ## Install as a Codex plugin
 
@@ -46,6 +46,7 @@ python3 skills/codex-graph/scripts/validate_skill.py
 - `skills/codex-graph/SKILL.md` — main skill instructions
 - `skills/codex-graph/agents/openai.yaml` — Codex skill metadata
 - `skills/codex-graph/references/` — topology, lifecycle, script, and source guidance
+- `skills/codex-graph/references/progressive-complexity.md` — authoritative L0-L4 escalation ladder
 - `skills/codex-graph/scripts/validate_skill.py` — structural and contract checks
 
 ## Status
