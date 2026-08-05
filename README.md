@@ -48,7 +48,7 @@ On Windows, run the validator and task-collection regression suite from
 Codex Desktop's terminal:
 
 ```powershell
-.\skills\codex-graph\scripts\run_windows_regressions.ps1
+.\scripts\run_windows_regressions.ps1
 ```
 
 The regression suite uses only Node's built-in test runner and simulates the
