@@ -21,6 +21,7 @@ REQUIRED_REFERENCES = {
     ROOT / "references" / "task-lifecycle.md",
     ROOT / "references" / "reference-seeds.md",
     ROOT / "references" / "progressive-complexity.md",
+    ROOT / "references" / "self-testing.md",
 }
 EXACT_SENTENCE = (
     "Write a code-mode script that implements "
@@ -158,6 +159,10 @@ def main() -> None:
         "same trigger set",
         "baseline executable nodes only",
         "escalation gates are excluded",
+        "self-testing protocol",
+        "isolated child thread",
+        "roadmap items",
+        "bounded self-test repair",
     ]:
         if required_phrase not in text:
             fail(f"missing required behavior: {required_phrase}")
@@ -189,6 +194,22 @@ def main() -> None:
     ]:
         if required_phrase not in lifecycle:
             fail(f"task lifecycle reference is missing: {required_phrase}")
+
+    self_testing = (ROOT / "references" / "self-testing.md").read_text(encoding="utf-8")
+    for required_phrase in [
+        "candidate bundle",
+        "portable skill_name",
+        "installable skill artifact",
+        "allow_nested_self_test",
+        "one bounded test run",
+        "Reject malformed",
+        "observed roadmap",
+        "One repair and re-run",
+        "fresh child thread",
+        "still-live handles",
+    ]:
+        if required_phrase not in self_testing:
+            fail(f"self-testing reference is missing: {required_phrase}")
 
     patterns = (ROOT / "references" / "code-mode-script-patterns.md").read_text(encoding="utf-8")
     if "return `${rendered.slice" in patterns:
