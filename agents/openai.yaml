@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Graph Prompt"
+  short_description: "Design a graph and build its Code Mode script"
+  default_prompt: "Use $codex-graph to design this goal as an agent graph, then build the complete runnable Codex Code Mode JavaScript that implements it."
