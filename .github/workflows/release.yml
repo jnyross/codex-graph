@@ -2,29 +2,55 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release:
+    if: "!contains(github.event.head_commit.message, 'chore(release):')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Verify version
-        env:
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          test "${TAG_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
-          test "$(node -p "require('./.codex-plugin/plugin.json').version")" = "$(tr -d '[:space:]' < VERSION)"
+        with:
+          fetch-depth: 0
 
       - name: Validate skill
         run: python3 skills/codex-graph/scripts/validate_skill.py
 
+      - name: Validate JavaScript
+        run: node --test skills/codex-graph/scripts/*.test.js
+
+      - name: Compute version and update files
+        id: version
+        run: |
+          version="$(python3 scripts/auto_release.py)"
+          if [ -z "$version" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Commit release files
+        if: steps.version.outputs.release == 'true'
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add VERSION .codex-plugin/plugin.json CHANGELOG.md
+          git commit -m "chore(release): v${{ steps.version.outputs.version }} [skip ci]"
+          git push origin HEAD:main || {
+            echo "::error::Unable to push the release commit to main (branch protection may be enabled)."
+            exit 1
+          }
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
       - name: Create GitHub release
+        if: steps.version.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" --generate-notes --title "${{ github.ref_name }}"
+        run: gh release create "v${{ steps.version.outputs.version }}" --generate-notes --title "v${{ steps.version.outputs.version }}"
