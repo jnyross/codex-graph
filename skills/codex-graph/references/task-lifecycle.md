@@ -112,27 +112,54 @@ Use a cursor-aware bounded collector rather than repeating the same read:
 
 ```javascript
 const MAX_OUTPUT_CHARS_PER_ITEM = 20000;
+const MAX_IDLE_POLLS = 4;
 let afterCursor;
 let collectionRounds = 0;
+let idlePolls = 0;
+let previousSnapshotFingerprint;
 
-while (collectionRounds < MAX_COLLECTION_ROUNDS) {
+function snapshotFingerprint(snapshot) {
+  return JSON.stringify({
+    items: snapshot.items ?? [],
+    terminal: snapshot.terminal ?? null,
+  });
+}
+
+while (
+  collectionRounds < MAX_COLLECTION_ROUNDS &&
+  idlePolls < MAX_IDLE_POLLS
+) {
   const snapshot = await waitThreads({
     threadIds: [handle.thread_id],
     afterCursor,
     maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
   });
   const nextCursor = snapshot.afterCursor;
-  const hasNewData = nextCursor !== afterCursor || snapshot.items?.length > 0;
-  if (hasNewData) collectionRounds += 1;
-  afterCursor = nextCursor;
-  collectStructuredItems(snapshot.items);
+  const cursorAdvanced =
+    nextCursor !== undefined && nextCursor !== afterCursor;
+  const hasNewData =
+    cursorAdvanced ||
+    (previousSnapshotFingerprint === undefined ||
+      snapshotFingerprint(snapshot) !== previousSnapshotFingerprint);
+  if (hasNewData) {
+    collectionRounds += 1;
+    idlePolls = 0;
+    collectStructuredItems(snapshot.items);
+  } else {
+    idlePolls += 1;
+  }
+  previousSnapshotFingerprint = snapshotFingerprint(snapshot);
+  if (nextCursor !== undefined) afterCursor = nextCursor;
   if (hasTerminalHandoff(snapshot)) break;
-  if (!hasNewData) await new Promise((resolve) => setTimeout(resolve, COLLECTION_DELAY_MS));
+  if (!hasNewData) {
+    await new Promise((resolve) => setTimeout(resolve, COLLECTION_DELAY_MS));
+  }
 }
 ```
 
 Adapt the argument names to the active declaration, but preserve both
-properties: carry the cursor forward and stay within the declared item limit.
+properties: carry the cursor forward, deduplicate unchanged snapshots, and
+stay within the declared item limit and an explicit no-progress bound.
 
 ## 4. Make handoffs fit before execution
 
