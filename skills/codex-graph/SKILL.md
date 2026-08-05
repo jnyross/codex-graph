@@ -126,11 +126,10 @@ action mappings, `ESCALATION_CAP = 2`, and the one-repair invariant. `P1` is a
 zero-worker, zero-task inline evaluation of evidence produced by the baseline
 stage; it never delegates or spawns a task. `E1` is a plain conditional.
 `P1` must emit and validate verdict objects in the declared shape; malformed or
-missing verdicts fail closed. The terminal result must preserve every verdict,
-including `fired`, `not_fired`, `not_evaluated`, and `not_applicable`, and the
-action taken, including `none`. Every trigger has exactly one of those four
-states. The four verdict states are `fired`, `not_fired`, `not_evaluated`, and
-`not_applicable`.
+missing verdicts fail closed. The terminal result must preserve every verdict
+and the action taken, including `none`. The four verdict states are `fired`,
+`not_fired`, `not_evaluated`, and `not_applicable`; every trigger carries
+exactly one of them.
 
 ### Runtime and tool binding
 
