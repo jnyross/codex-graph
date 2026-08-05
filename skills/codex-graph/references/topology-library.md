@@ -183,7 +183,7 @@ validation is escalation-gated.
 
 ## Mixed-task adaptation
 
-For a mixed goal, add a short decomposition stage that produces a finite list of branches and proves their independence. Execute branches in chunks of at most four. Join them under one synthesis owner. Do not allow branches to spawn their own agents.
+For a mixed goal, add a short decomposition stage that produces a finite list of branches and proves their independence. Execute branches with the active tool's supported concurrency; if a measured limit appears, use staged fan-in. Join them under one synthesis owner. Do not allow branches to spawn their own agents.
 
 ## General adaptation rules
 

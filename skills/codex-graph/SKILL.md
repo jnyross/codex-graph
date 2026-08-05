@@ -55,9 +55,9 @@ named run-time escalation gate, not an up-front node.
 
 ## Design Part 1: Workflow Design
 
-Create a goal-specific directed acyclic workflow with a bounded, unrolled repair
-path and a minimal baseline. Draw the baseline path first; add higher-tier
-stages only behind named escalation gates.
+Create a goal-specific directed acyclic workflow with a minimal baseline and an
+unrolled repair path only when repair is part of the goal. Draw the baseline
+path first; add higher-tier stages only behind named escalation gates.
 
 Apply these rules:
 
@@ -72,15 +72,21 @@ Apply these rules:
    serialization at lower tiers.
 4. Serialize synthesis, decisions, overlapping writes, integration, approvals, and authority-bearing actions.
 5. Permit parallel implementation only when write scopes are demonstrably disjoint. Assign explicit file or component boundaries.
-6. When L2 or a higher tier is active, use no more than four concurrent
-   workers and one delegation level. Never create nested swarms.
+6. When parallel work is justified, use the concurrency supported by the
+   declared tools and the task. Add a cap only when a tool, runtime, or
+   measured workload requires it; if the work later outgrows that cap, use
+   staged fan-in rather than imposing a speculative limit up front. Never
+   create nested swarms.
 7. Give the root orchestrator sole ownership of decomposition, integration, acceptance decisions, and the final report.
-8. Include exactly one possible repair pass, unrolled in the graph:
+8. If repair is needed, include exactly one possible repair pass, unrolled in
+   the graph:
    - initial validation;
    - one smallest evidence-led repair when needed;
    - one revalidation;
    - success or a safe stop with evidence.
-9. Do not draw an open-ended cycle. Operational waiting or polling is not a repair loop, but it must also be explicitly bounded.
+9. Do not draw an open-ended cycle. Operational waiting or polling is not a
+   repair loop; use the limits exposed by the active tool, or add a measured
+   deadline only when the operation can otherwise run indefinitely.
 10. Include safe-stop paths for unavailable tools, missing access, destructive or approval-gated actions, unresolved material ambiguity, worker failure, and failed revalidation.
 11. Use Mermaid `flowchart TD` by default. Use a clean text graph only when Mermaid would reduce clarity.
 12. Label important edges with their dependency or gate condition.
@@ -122,7 +128,7 @@ Build a complete, goal-specific JavaScript program that implements Part 1 one-fo
 
 The script's `WORKFLOW` metadata must declare `P1` and escalation gates when
 `escalation` is not `none-declared`, trigger IDs, thresholds, deterministic
-action mappings, `ESCALATION_CAP = 2`, and the one-repair invariant. `P1` is a
+action mappings, and the one-repair invariant. `P1` is a
 zero-worker, zero-task inline evaluation of evidence produced by the baseline
 stage; it never delegates or spawns a task. `E1` is a plain conditional.
 `P1` must emit and validate verdict objects in the declared shape; malformed or
@@ -159,8 +165,8 @@ that omission in the complexity-ladder section. A trigger whose prerequisite
 tier is inactive is reported as `not_applicable`, not `not_evaluated`. P1 is
 never a worker or spawned task.
 The `WORKFLOW` metadata must include the baseline tier, each node's tier and
-activation condition, trigger definitions, the escalation cap, and the
-invariant that the repair allowance stays one across all tiers.
+activation condition, trigger definitions, and the invariant that the repair
+allowance stays one across all tiers.
 
 The script must contain a compact `WORKFLOW` object or equivalent metadata with:
 
@@ -185,12 +191,26 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
 3. Run independent, non-conflicting calls in one bounded stage with `Promise.allSettled(...)`, inspect every result, and fail closed on any required-worker failure.
 4. Use `Promise.all(...)` only when any rejection should abort the whole batch and no partial handoff is useful.
 5. Keep dependencies, adaptive decisions, approvals, waits, overlapping writes, synthesis, integration, and repair sequential.
-6. Cap active workers at four. Chunk larger independent sets rather than exceeding the cap.
+6. Use the concurrency supported by the active tools and task. Add a cap or
+   staged fan-in only when a tool, runtime, or observed workload requires it.
 7. Treat task creation as a lifecycle, not one response. Preserve the complete setup result, ready `threadId`, pending `clientThreadId`, `hostId`, exact project ID, unique run tag and title, and node ID. Resolve pending setup through bounded task-list polling. Match the exact project ID plus the unique run tag in `title`; while setup is loading, also allow the same exact tag in `summary`.
-8. Wait for declared completion before consuming a handoff. A bounded wait timeout is an observation point, not proof of failure. Bound collection with both a real wall-clock deadline and a maximum check count. If the wait tool returns early while the task remains active, apply a named minimum fallback delay before the next read; an attempt count alone is not an elapsed-time budget.
-9. Read task results through their structured turns and `items`. Respect every declared read limit; keep `maxOutputCharsPerItem` at or below 20,000 unless the active schema gives a lower limit. Do not assume the result is one flat text field.
-10. Require complete JSON handoffs that fit a conservative per-worker output budget. Treat each handoff as an index into preserved evidence, not as the only evidence store. Put overflow in an expansion queue or an approved durable artifact with stable IDs, locators, and a hash. Never repair payload size by slicing serialized JSON, replacing evidence with unexplained aliases, or dropping decisive evidence.
-11. Budget joins separately from worker handoffs. Declare `WORKER_HANDOFF_MAX_CHARS` and `JOIN_MANIFEST_MAX_CHARS`; never serialize all upstream handoffs into one combined validation payload or pass that aggregate through the per-worker limit. Join with a compact manifest of node IDs, statuses, record IDs, artifact identifiers, and hashes; have validation read the preserved artifacts or process bounded shards. If the join manifest itself exceeds its declared budget, split validation into bounded shards and preserve the exact shard handles for resume.
+8. Wait for declared completion before consuming a handoff. A wait timeout is
+   an observation point, not proof of failure. Use the active tool's wait
+   semantics; add a deadline or polling cap only when the operation could
+   otherwise run indefinitely.
+9. Read task results through their structured turns and `items`. Respect
+   `maxOutputCharsPerItem` or any other active tool-declared read limit when one
+   exists; do not assume the result is one flat text field.
+10. Pass complete structured handoffs by default. Add a payload budget only
+   when the active tool declares one or an observed run demonstrates a limit.
+   Keep large evidence in an approved durable artifact when needed, and never
+   slice serialized JSON, replace required evidence with unexplained aliases,
+   or drop decisive evidence. An expansion queue is another optional overflow
+   route when deferred work is more appropriate than a larger handoff.
+11. Join upstream results directly when they fit the active tool contract. If
+   a measured payload limit is reached, use a compact manifest, durable
+   artifact references, or staged fan-in; preserve exact shard handles for
+   resume. Do not invent a 9,000-character worker or combined-payload limit.
 12. Define accepted transport shapes and deterministic adapters before execution. Normalize a schema-declared equivalent shape, such as a shard object containing `record_ids`, to the canonical internal form before cardinality and field validation. Do not reject a semantically complete handoff only because its declared wrapper differs, and do not use permissive guessing for undeclared shapes.
 13. At L4, support explicit checkpoints and resume handles for long task graphs. A checkpoint separates `complete`, `active`, and `not_started` nodes. Reuse complete handoffs, validate and collect active handles, and create not-started nodes normally when their dependencies pass. Never require a resume handle for a node that has not started.
 14. Build one terminal result and emit it exactly once with a `terminalEmitted` guard. Do not call `exit()` inside a catchable orchestration block; an exit signal can be caught and cause a second terminal result.
@@ -212,7 +232,7 @@ The final `text(...)` output must include:
 - tier reached and baseline tier;
 - every trigger's ID, threshold, measured value, evidence, state (`fired`,
   `not_fired`, `not_evaluated`, or `not_applicable`), and resulting action;
-- escalations used versus the escalation cap;
+- escalations used and the reason for each promotion;
 - tiers and nodes not activated, reported as skipped;
 - objective and completed scope;
 - executed node IDs and skipped conditional nodes;
@@ -274,13 +294,14 @@ Write a code-mode script that implements this exact workflow and run it…
 Immediately clarify that the complete script below is the implementation: Codex should submit its raw JavaScript body to Code Mode and run it without redesigning the graph. The sentence is required even though the script has already been built.
 
 Under `## Complexity ladder`, document the baseline tier, every fired trigger
-and its evidence, deferred tiers with their triggers, the escalation cap, and
-whether `escalation: none-declared` permits omission of `P1` and `E1`. If L4 is
-possible, show the budget-derived cardinality threshold arithmetic and the
-per-record size basis. Include a fenced JSON verdict block with one entry per
-declared trigger using `trigger_id`, `state`, `measured`, `threshold`, `evidence`,
-and `action`. Part 1 and Part 2 must declare exactly the same trigger set and
-the same verdict states.
+and its evidence, deferred tiers with their triggers, and whether
+`escalation: none-declared` permits omission of `P1` and `E1`. If execution
+reveals a real tool or payload constraint, record the observation and the
+smallest response; do not invent a budget-derived threshold in advance.
+Include a fenced JSON verdict block with one entry per declared trigger using
+`trigger_id`, `state`, `measured`, `threshold`, `evidence`, and `action`. Part 1
+and Part 2 must declare exactly the same trigger set and the same verdict
+states.
 
 Under `## Script`, include one fenced `javascript` block containing the complete program. Markdown fences are for presentation only and must not be included when the raw program is submitted to Code Mode.
 
@@ -344,10 +365,8 @@ Before returning the paired deliverable, verify all of the following:
   `not_applicable`; structurally unavailable triggers use `not_applicable`.
 - `## Complexity ladder` contains a fenced JSON verdict block with one entry
   per declared trigger, and Part 1 and Part 2 use the same trigger set.
-- Any L4 cardinality threshold is derived from declared budgets rather than an
-  unexplained round number.
-- The per-record size input states whether it is measured from a sample or
-  explicitly allocated as a budget; an unstated estimate is rejected.
+- Any L4 payload or cardinality response is backed by an observed tool or
+  workload constraint rather than an unexplained round number.
 - Minimal-node counts include baseline executable nodes only; conditional
   stages, `P1`, and escalation gates are excluded.
 - Trigger IDs and thresholds are declared before execution and escalation
@@ -355,7 +374,7 @@ Before returning the paired deliverable, verify all of the following:
 - When escalation is not `none-declared`, the baseline graph and script include
   inline probe node `P1`; malformed verdicts fail closed. Otherwise the
   omission of `P1` and `E1` is justified.
-- Escalation is bounded, cannot exceed its cap, and never demotes.
+- Escalation is explicit, evidence-led, and never demotes.
 - One repair allowance is used regardless of tier.
 - Skipped tiers and nodes are reported.
 - Part 1 is tailored to the actual goal and preserves user constraints.
@@ -366,13 +385,13 @@ Before returning the paired deliverable, verify all of the following:
 - The script is complete JavaScript, not pseudocode or a request for another model to write it.
 - The script uses raw Code Mode semantics, awaits all work, emits output with `text(...)`, and does not use Node.js or `console`.
 - Required tools are discovered or bound from actual exposed metadata; no tool APIs are invented.
-- The concurrency cap, integration ownership, fail-closed behavior, and one-repair rule are encoded in code.
+- Integration ownership, fail-closed behavior, and the one-repair rule are encoded in code; concurrency caps are added only when justified by active tools or observations.
 - Validator decisions are machine-readable and malformed decisions fail closed.
 - Saved-project graphs resolve and preserve the exact project ID; read-only tasks use local and writing tasks use worktrees.
 - Pending setup handles are retained and resolved; wait timeouts are checked against fresh task state.
 - Early-returning wait tools cannot consume the full collection budget in a tight loop.
-- Task reads stay within the declared item limit and parse structured `items`.
-- Worker handoffs fit the declared budget without blind JSON truncation.
+- Task reads respect the active tool's declared item limit and parse structured `items`.
+- Worker handoffs use the active transport directly, or staged fan-in when an observed limit requires it; never use blind JSON truncation.
 - Independent audit lenses fan out and converge at one root-owned gate.
 - Resume handles collect existing tasks instead of creating duplicates.
 - A collection-budget stop preserves completed handoffs and active handles for resume.

@@ -45,17 +45,18 @@ verdict object uses exactly one of these four states.
   distinct acceptance check; show that one owner can consume the handoff.
 - **Cost bought:** limited discovery assistance without a fan-out or join.
 
-### L2 bounded discovery
+### L2 parallel discovery
 
-- **Adds:** bounded parallel read-only discovery (at most four workers), one
-  writer or integration owner, and one validator.
+- **Adds:** parallel read-only discovery when the active tools and task justify
+  it, one writer or integration owner, and one validator.
 - **Entry trigger:** two or more genuinely independent read-only questions are
   required, or ambiguity cannot be resolved by one owner reading the named
   context.
 - **Evidence:** list each question, its disjoint read scope, and the decision
   that joins them; prove independence rather than using visual parallelism.
 - **Cost bought:** faster evidence gathering while preserving one authority for
-  writes and integration.
+  writes and integration. If the tool or payload is actually constrained,
+  introduce a measured concurrency cap or staged fan-in at this tier.
 
 ### L3 independent validation
 
@@ -123,23 +124,11 @@ inflate the baseline count.
 
 ## Executable escalation tests
 
-Declare this threshold set before execution and reuse it as part of the same
-acceptance contract; do not choose thresholds after observing results. When a
-cardinality threshold is needed, derive it from the already-declared budgets:
-the threshold is the number of records one serial owner can validate and
-normalize within the declared per-item output budget and handoff budget. Show
-the arithmetic in the design; do not use an unexplained round number. The
-per-record size input must also be part of the acceptance contract and state
-its basis: either measure it from a sample record or explicitly allocate it as
-a per-record budget. If no sample exists, declare the allocated budget as an
-assumption in `## Known context and assumptions`; an unstated estimate is
-non-conforming.
-
-For example, if the acceptance contract explicitly allocates 1,500 characters
-per normalized record (the stated basis), the per-item output budget is 20,000
-characters, and the handoff budget is 9,000 characters, the usable capacity is
-`min(floor(20000 / 1500), floor(9000 / 1500)) = 6` records. Declare
-`record_count > 6` as the L4 cardinality trigger before execution.
+Declare triggers before execution when they are known. Do not invent a
+cardinality, character, concurrency, or retry threshold merely to justify a
+more elaborate graph. If execution reveals a tool limit, growing payload, or
+slow fan-in, record the observed value and add the smallest useful response:
+usually a compact manifest, staged fan-in, or a resumable checkpoint.
 
 Each baseline graph with deferred triggers includes probe node `P1`, which
 runs only the cheap guard test for the next tier after the baseline stage. A
@@ -161,14 +150,14 @@ the same trigger set and states; prose measurements alone are non-conforming.
 | Test ID | Cheap probe and measured value | Declared threshold | Fired verdict and action |
 |---|---|---|---|
 | `T1-WORKER-NEED` | Read the unresolved-ambiguity list and count separable items | `separable_items >= 1` | Add L1 worker `W1` and validator `V1` |
-| `T2-DISJOINT-READ-SCOPES` | Count independent read-only questions and compare their scopes | `independent_questions >= 2` and `max_workers <= 4` | Add L2 discovery `D1-D4`, then owner `I1` |
+| `T2-DISJOINT-READ-SCOPES` | Count independent read-only questions and compare their scopes | `independent_questions >= 2` | Add L2 discovery, then owner `I1`; cap or stage only if the active tools require it |
 | `T3-INDEPENDENT-LENSES` | Count acceptance lenses with distinct criterion IDs and inputs | `independent_lenses >= 2` | Add L3 validators `V1A-V1D` and root gate `G1` |
-| `T4-SHARDED-RECOVERY` | Measure record cardinality and inspect repair verdict span | `record_count > declared_threshold` or `repair_lenses >= 2` | Add L4 shards `R1-R4`, expansion queue `Q1`, checkpoint `C1`, resume `H1` |
+| `T4-SHARDED-RECOVERY` | Observe a tool/payload constraint or inspect repair verdict span | `observed constraint` or `repair_lenses >= 2` | Add only the needed staged fan-in, artifact, checkpoint, or resume machinery |
 
-Each result must include the measured value and threshold, not just a prose
+Each result must include the measured value or observation, not just a prose
 claim. A fired test promotes to its declared next tier and action exactly; there
-is no improvised stage selection. Evaluate only the next tier's guard test,
-promote at most once per probe evaluation, and cap total promotions at 2. Tests
+is no improvised stage selection. Evaluate only the next tier's guard test.
+Tests
 above the next tier are reported as `not_evaluated`, not as `fired: false`;
 triggers whose prerequisites are inactive are reported as `not_applicable`.
 
@@ -176,10 +165,10 @@ triggers whose prerequisites are inactive are reported as `not_applicable`.
 
 | Fired trigger | Added stages and IDs | Added scope | Does not change |
 |---|---|---|---|
-| `T1-WORKER-NEED` | `E1`, `W1`, `V1` | `W1` read-only discovery; `V1` validation | One owner, four-worker cap, one repair |
-| `T2-DISJOINT-READ-SCOPES` | `E2`, `D1-D4`, `I1` | Disjoint read-only discovery; `I1` owns writes | One integration owner, no nested delegation |
-| `T3-INDEPENDENT-LENSES` | `E3`, `V1A-V1D`, `G1` | Read-only validation lenses and root acceptance | Repair allowance stays one; cap stays four |
-| `T4-SHARDED-RECOVERY` | `E4`, `R1-R4`, `Q1`, `C1`, `H1` | Record-specific repair and resumability | No demotion; no extra repair; no new scope |
+| `T1-WORKER-NEED` | `E1`, `W1`, `V1` | `W1` read-only discovery; `V1` validation | One owner, no speculative cap |
+| `T2-DISJOINT-READ-SCOPES` | `E2`, `D*`, `I1` | Disjoint read-only discovery; `I1` owns writes | One integration owner, no nested delegation |
+| `T3-INDEPENDENT-LENSES` | `E3`, `V*`, `G1` | Read-only validation lenses and root acceptance | Repair allowance stays one; no speculative cap |
+| `T4-SHARDED-RECOVERY` | `E4`, `R*`, `Q1`, `C1`, `H1` | Only the needed record-specific repair and resumability | No demotion; no speculative shard count or new scope |
 
 The script must record the action taken or `none` for every verdict, including
 `not_evaluated` and malformed verdicts. A promotion never demotes: no demotion
@@ -210,7 +199,6 @@ const TIER_ACTIONS = {
   L3: "add E3, V1A-V1D, G1",
   L4: "add E4, R1-R4, Q1, C1, H1",
 };
-const ESCALATION_CAP = 2;
 let currentTier = BASELINE_TIER;
 let escalationsUsed = 0;
 const skippedTiers = [];
@@ -255,7 +243,7 @@ function maybeEscalate(observation) {
     recordNotApplicable("escalation is none-declared");
     return false;
   }
-  if (!triggerId || escalationsUsed >= ESCALATION_CAP) {
+  if (!triggerId) {
     recordNotEvaluated(observation, Number(currentTier.slice(1)));
     return false;
   }
@@ -290,10 +278,12 @@ function maybeEscalate(observation) {
 }
 ```
 
-Keep `escalationsUsed` bounded by an escalation cap of 2. Promote only; never
-demote; this is the no-demotion rule.
+Keep `escalationsUsed` as an audit count. Promote only; never demote; this is
+the no-demotion rule. If the active tools or workload later require a
+concurrency or payload limit, add that observed constraint and use staged
+fan-in; do not impose a speculative escalation cap.
 Apply one repair total regardless of tier. Report the tier reached, every
-trigger with its evidence and exactly one state, escalations used versus cap,
+trigger with its evidence and exactly one state, escalations used and why,
 and skipped tiers or nodes. Use `recordNotApplicable` when the design declares
 `escalation: none-declared` or when a prerequisite tier is inactive. A skipped
 tier is not an omitted node.

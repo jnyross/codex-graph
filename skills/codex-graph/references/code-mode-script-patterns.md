@@ -90,11 +90,7 @@ Do not add `agent_type`, model, or reasoning overrides unless the goal requires 
 Use `Promise.allSettled` when partial diagnostics are useful, but treat any required worker failure as a blocked stage.
 
 ```javascript
-async function spawnRequiredBatch(nodes, spawnTool, maxConcurrency) {
-  if (nodes.length > maxConcurrency) {
-    throw new Error(`Batch exceeds concurrency cap: ${nodes.length} > ${maxConcurrency}`);
-  }
-
+async function spawnRequiredBatch(nodes, spawnTool) {
   const settled = await Promise.allSettled(
     nodes.map((node) => spawnTool.call(spawnArgs(spawnTool, node)))
   );
@@ -115,9 +111,9 @@ async function spawnRequiredBatch(nodes, spawnTool, maxConcurrency) {
 }
 ```
 
-When the active tier permits fan-out, run more than four independent nodes in
-explicit sequential chunks of at most four. Do not create a worker that spawns
-another worker.
+When the active tool or observed workload requires a fan-out cap, run larger
+independent sets in explicit sequential stages and join them under one owner.
+Do not create a worker that spawns another worker.
 
 ## Bind visible tasks to the correct project
 
@@ -129,33 +125,36 @@ A task-creation result can contain a ready `threadId` or only a pending `clientT
 
 Do not reduce a task handle to one convenience ID while setup or execution is live. A blocked terminal report must include each node ID, ready or pending ID, project ID, host ID, title, state, and the exact start or collection error.
 
-## Read structured task output within limits
+## Read structured task output
 
-Task reads return structured turns and `items`; they are not guaranteed to expose one flat text field. Recursively inspect the structured result and validate the required JSON handoff against the node ID and schema. Keep `maxOutputCharsPerItem` at or below 20,000 unless the active tool declaration gives a lower limit.
+Task reads return structured turns and `items`; they are not guaranteed to expose one flat text field. Recursively inspect the structured result and validate the required JSON handoff against the node ID and schema. Request the tool's supported output size rather than assuming a universal item limit.
 
-A wait timeout is not by itself a task failure. Bound collection with a wall-clock deadline and a named maximum number of wait/read checks. Some Codex builds can return from the wait tool immediately. Measure actual elapsed time; when the task remains active and the wait returned early, apply a minimum fallback delay before the next check. Stop only when a terminal failure appears or the real deadline or check budget is exhausted.
+A wait timeout is not by itself a task failure. Use the active tool's wait semantics; if it can return immediately or run indefinitely, add a named deadline and polling strategy based on the observed behavior.
 
 Accept explicit checkpoints and resume handles for long graphs. Validate active handles by node ID, project ID, host ID, model policy, and ready task ID, then collect the existing task. Reuse compact handoffs for completed nodes. Create `not_started` nodes normally after their dependencies pass; do not require a handle for a future stage. A resume path must not duplicate completed or active work.
 
-When the bounded collection budget expires while a task is still active, return a resumable checkpoint. Preserve completed handoffs, active handles, not-started node IDs, and the exact wait budget used. Do not repeat completed research in the next run.
+When an observed collection limit or active-tool deadline stops a task while it
+is still active, return a resumable checkpoint. Preserve completed handoffs,
+active handles, not-started node IDs, and the exact stop condition used. Do not
+repeat completed research in the next run.
 
-## Bound handoffs and joins before validation
+## Handoffs and joins
 
-Require each worker to return one complete JSON object under a conservative per-worker budget, normally 8,000-9,000 characters. Keep decisive evidence in the handoff. Put overflow candidates in an `expansion_queue`, or store large evidence in an approved durable artifact and return its path or identifier.
+Require each worker to return one complete JSON object. Do not impose a character budget unless the active tool declares one or a run demonstrates that one is needed. Keep decisive evidence in the handoff; use an approved durable artifact when the evidence is too large for the actual transport.
 
 The compact JSON is a routing index, not the authoritative evidence store. For evidence-heavy work, give each record a stable ID and preserve complete URLs, source roles, dates, locators, and extracts in the durable artifact. Return the artifact identifier and hash with the compact record index. Do not compress required evidence into unexplained aliases such as `S1`.
 
 ```javascript
 function boundedJson(value, maxChars) {
   const rendered = JSON.stringify(value, null, 2);
-  if (rendered.length > maxChars) {
+  if (maxChars !== undefined && rendered.length > maxChars) {
     throw new Error(`Complete handoff exceeds ${maxChars} characters`);
   }
   return rendered;
 }
 ```
 
-Declare `WORKER_HANDOFF_MAX_CHARS` and `JOIN_MANIFEST_MAX_CHARS` in the workflow contract; do not hide either budget in a helper default. `boundedJson(workerHandoff, WORKER_HANDOFF_MAX_CHARS)` may validate one worker result, but `boundedJson({ handoffs }, WORKER_HANDOFF_MAX_CHARS)` is invalid because it treats a combined join as one worker handoff.
+If a measured transport limit appears, declare it in the workflow contract and apply it to the smallest affected boundary. `boundedJson(workerHandoff, observedLimit)` may validate one worker result, but do not apply that limit to an aggregate join unless the tool explicitly imposes it.
 
 Build joins from references rather than embedding every handoff:
 
@@ -171,7 +170,7 @@ function joinManifest(handoffs) {
 }
 ```
 
-Validate the manifest against `JOIN_MANIFEST_MAX_CHARS`. If it does not fit, create bounded validation shards containing manifest entries, preserve their exact node and artifact handles, and validate each shard independently before one serial root gate. Never slice serialized JSON or delay validation by passing the combined payload through the worker limit.
+If an aggregate join exceeds an observed transport limit, create staged validation fan-in: compact manifest entries or artifact references, then bounded shards only where needed, followed by one serial root gate. Preserve exact node and artifact handles. Never slice serialized JSON.
 
 ## Freeze one acceptance and schema contract
 
