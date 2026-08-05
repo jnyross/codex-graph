@@ -13,6 +13,17 @@ Use this reference to turn the approved graph design into complete Codex Code Mo
 - A first-line `// @exec: {...}` pragma can set the outer yield interval and output budget.
 - If the outer execution yields with a cell ID, the caller must use the public Code Mode wait operation until the cell completes.
 
+## Keep prerequisite artifacts outside the graph
+
+The script should consume stable references to prerequisite artifacts rather
+than creating them as worker stages. Keep eval cases, fixtures, benchmark
+corpora, rubrics, reference answers, seed datasets, and scoring harnesses in a
+separate artifact lifecycle. The work graph may produce outputs and evidence,
+or invoke an existing evaluator as a declared acceptance check, but should not
+grow nodes for generating the evaluator or aggregating its score. If the user
+asks for a new prerequisite artifact, produce and validate it as a separate
+deliverable before wiring its reference into the repeatable graph.
+
 ## Prefer semantic tool resolution over hard-coded namespaces
 
 Tool namespaces and multi-agent versions can differ. Resolve an operation from actual metadata, confirm it is callable, and fail closed when it is absent.

@@ -6,6 +6,16 @@ Select the lowest progressive-complexity tier whose trigger is already proven.
 The small-change pattern is the explicit L0 baseline. Each pattern notes which
 stages are escalation-gated rather than baseline.
 
+## Artifact boundary
+
+The topology describes repeatable work execution, not the lifecycle of every
+input or evaluation asset. Create and version prerequisite artifacts separately,
+then pass stable references into the graph. This includes eval cases, fixtures,
+benchmark data, rubrics, reference answers, seed datasets, and scoring
+harnesses. A graph can consume an existing evaluator or emit evidence for an
+external scorer, but artifact creation and post-run scoring are not graph nodes
+unless they are explicitly the repeatable work being requested.
+
 ## Selection guide
 
 | Task family | Safe parallel work | Serialized authority | Typical gate | Script shape |
