@@ -88,7 +88,9 @@ def rewrite_release_files(
     plugin = json.loads(plugin_text)
     plugin["version"] = version
     trailing_newline = "\n" if plugin_text.endswith("\n") else ""
-    plugin_path.write_text(json.dumps(plugin, indent=2) + trailing_newline)
+    plugin_path.write_text(
+        json.dumps(plugin, indent=2, ensure_ascii=False) + trailing_newline
+    )
 
     changelog_path = root / "CHANGELOG.md"
     changelog = changelog_path.read_text()
