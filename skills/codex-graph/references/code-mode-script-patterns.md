@@ -115,7 +115,9 @@ async function spawnRequiredBatch(nodes, spawnTool, maxConcurrency) {
 }
 ```
 
-For more than four independent nodes, run explicit sequential chunks of at most four. Do not create a worker that spawns another worker.
+When the active tier permits fan-out, run more than four independent nodes in
+explicit sequential chunks of at most four. Do not create a worker that spawns
+another worker.
 
 ## Bind visible tasks to the correct project
 
@@ -210,7 +212,11 @@ The validator schema should include at least:
 }
 ```
 
-When an artifact has independent audit dimensions or record batches, run those validators in parallel. The root orchestrator then deduplicates their failed criteria and affected IDs at one serial gate. Revalidation runs only the affected lanes and any global check invalidated by the repair.
+When L3 is active and an artifact has independent audit dimensions or record
+batches, run those validators in parallel. The root orchestrator then
+deduplicates their failed criteria and affected IDs at one serial gate.
+Revalidation runs only the affected lanes and any global check invalidated by
+the repair.
 
 Each validator must cite a declared acceptance criterion. It cannot require a larger sample or new coverage domain after the run starts. The root gate rejects repair instructions that contradict the fixed scope or cannot be completed within the one declared repair stage.
 
@@ -218,7 +224,11 @@ Each validator must cite a declared acceptance criterion. It cannot require a la
 
 Do not use a retry loop. Keep the branch visible.
 
-If many records need corrections, keep one logical repair branch but split its internal work into bounded record-specific correction shards. Join those shards at one serial repair owner, validate and normalize every record to the canonical schema, and produce one repaired artifact. This is still one repair stage; failed revalidation stops the graph.
+If L4 is active and many records need corrections, keep one logical repair
+branch but split its internal work into bounded record-specific correction
+shards. Join those shards at one serial repair owner, validate and normalize
+every record to the canonical schema, and produce one repaired artifact. This is
+still one repair stage; failed revalidation stops the graph.
 
 ```javascript
 async function applySingleRepair(initialDecision, initialArtifact, initialValidation) {

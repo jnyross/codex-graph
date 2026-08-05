@@ -2,6 +2,10 @@
 
 Use these patterns as starting points for Part 1 and as the execution skeleton for Part 2. Rename every node, tailor every contract, and preserve the same node IDs in the JavaScript `WORKFLOW` metadata. Do not force parallelism onto a trivial task.
 
+Select the lowest progressive-complexity tier whose trigger is already proven.
+The small-change pattern is the explicit L0 baseline. Each pattern notes which
+stages are escalation-gated rather than baseline.
+
 ## Selection guide
 
 | Task family | Safe parallel work | Serialized authority | Typical gate | Script shape |
@@ -30,6 +34,7 @@ flowchart TD
 ```
 
 **Script mapping:** run `N1` and `N2` in one implementation-owner prompt when their separation adds no value; keep their IDs in the workflow metadata. Parse `V1` as machine-readable JSON. Use one conditional `if` for `R1` and `V2`.
+**Tier:** L0 baseline; `R1` and `V2` are conditional repair stages, not baseline.
 
 ## Pattern: feature or refactor
 
@@ -56,6 +61,8 @@ flowchart TD
 ```
 
 **Script mapping:** spawn `N2A–N2C` concurrently after `N1`; wait for all required handoffs; give them to one `N3/N4` integration owner. Run `V1A` and `V1B` concurrently only because they are read-only after integration. Join both into one gate decision.
+**Tier:** L2 baseline for bounded discovery; `V1A`, `V1B`, and `G1` are L3
+escalation-gated validation stages.
 
 ## Pattern: debugging or investigation
 
@@ -82,6 +89,8 @@ flowchart TD
 ```
 
 **Script mapping:** parallel workers may propose hypotheses but cannot choose the root cause. `N3` is the sole evidence-reconciliation agent. `N4` is the sole writer unless the goal proves disjoint scopes.
+**Tier:** L2 when competing evidence is proven; parallel evidence workers and
+the extra validation lane are escalation-gated.
 
 ## Pattern: research or analysis
 
@@ -112,6 +121,10 @@ flowchart TD
 ```
 
 **Script mapping:** `N1` freezes one acceptance contract, including the pilot size, selection rule, required evidence fields, audit thresholds, publication rule, and repair boundary. Source collectors return concise claim/evidence indexes, preserve full acceptance evidence in a durable artifact, and put deferred candidates in an expansion queue. `N3/N4` receives bounded handoffs and owns reconciliation into one canonical record schema. Run `V1A-V1D` concurrently because they are read-only and independent; each returns strict JSON with affected claim IDs and declared criterion IDs. Only `G1` can accept the artifact or set the single repair scope. If many records fail, `R1` may use bounded record-specific correction shards, but one serial owner must normalize and integrate them once before `V2`.
+**Tier:** L2 for source discovery, L3 for independent audit lenses, and L4
+for the expansion queue, record-specific repair shards, checkpoints, and
+resume. The collectors, audit lanes, `G1`, and L4 repair machinery are
+escalation-gated unless their triggers are proven at design time.
 
 ## Pattern: audit or review
 
@@ -137,6 +150,8 @@ flowchart TD
 ```
 
 **Script mapping:** fan out `N2A–N2D` with a maximum of four workers. Only `N3` can deduplicate or assign canonical finding IDs. Treat the repair path as evidence repair, not permission to modify the reviewed system unless requested.
+**Tier:** L3 when independent review lenses are proven; `N2A–N2D` and the join
+are escalation-gated. The baseline is one review owner and one validator.
 
 ## Pattern: migration or rollout
 
@@ -163,6 +178,8 @@ flowchart TD
 ```
 
 **Script mapping:** `N4` implements only the first safe stage. The graph must not silently continue to later rollout stages. Approval-gated deployment remains a terminal boundary, not a worker action.
+**Tier:** L2 for independent inventory and compatibility discovery; additional
+validation is escalation-gated.
 
 ## Mixed-task adaptation
 

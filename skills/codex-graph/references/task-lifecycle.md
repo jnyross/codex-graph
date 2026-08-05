@@ -149,7 +149,7 @@ If a fixed model is at capacity, keep the model policy. Permit one clean same-mo
 
 ## 6. Resume without duplicate tasks
 
-For a long graph, accept an explicit checkpoint with three node states:
+For an L4 long graph, accept an explicit checkpoint with three node states:
 
 - `complete`: reuse its compact, schema-valid handoff;
 - `active`: validate its live handle and continue collection;

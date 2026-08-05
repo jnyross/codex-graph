@@ -20,6 +20,7 @@ REQUIRED_REFERENCES = {
     ROOT / "references" / "code-mode-script-patterns.md",
     ROOT / "references" / "task-lifecycle.md",
     ROOT / "references" / "reference-seeds.md",
+    ROOT / "references" / "progressive-complexity.md",
 }
 EXACT_SENTENCE = (
     "Write a code-mode script that implements "
@@ -30,6 +31,7 @@ REQUIRED_OUTPUT_HEADINGS = [
     "## Objective",
     "## Known context and assumptions",
     "## Success criteria",
+    "## Complexity ladder",
     "## Workflow graph",
     "## Node contracts",
     "## Constraints and guardrails",
@@ -144,6 +146,20 @@ def main() -> None:
         "maxOutputCharsPerItem",
         "saved Codex project",
         "expansion queue",
+        "baseline tier",
+        "escalation cap",
+        "always active at baseline",
+        "reported as skipped",
+        "not_evaluated",
+        "none-declared",
+        "four verdict states",
+        "fenced JSON verdict block",
+        "same trigger set",
+        "per-record size basis",
+        "unstated estimate",
+        "budget-derived cardinality threshold",
+        "baseline executable nodes only",
+        "escalation gates are excluded",
     ]:
         if required_phrase not in text:
             fail(f"missing required behavior: {required_phrase}")
@@ -191,6 +207,47 @@ def main() -> None:
     for node_id in ("V1A", "V1B", "V1C", "V1D", "G1"):
         if node_id not in topology:
             fail(f"research audit fan-out is missing node: {node_id}")
+
+    complexity = (
+        ROOT / "references" / "progressive-complexity.md"
+    ).read_text(encoding="utf-8")
+    for required_phrase in [
+        "L0 direct",
+        "L1 delegated",
+        "L2 bounded discovery",
+        "L3 independent validation",
+        "L4 sharded recovery",
+        "Trigger table",
+        "Anti-triggers",
+        "escalation cap of 2",
+        "never demote",
+        "no demotion",
+        "escalationsUsed",
+        "one repair total regardless of tier",
+        "T1-WORKER-NEED",
+        "T2-DISJOINT-READ-SCOPES",
+        "T3-INDEPENDENT-LENSES",
+        "T4-SHARDED-RECOVERY",
+        "declared threshold",
+        "Escalation action mapping",
+        "probe node `P1`",
+        "verdicts fail closed",
+        "derive it from the already-declared budgets",
+        "number of records one serial owner can validate and",
+        "not_evaluated",
+        "none-declared",
+        "state: \"fired\"|\"not_fired\"|\"not_evaluated\"|\"not_applicable\"",
+        "exactly one state",
+        "not_applicable",
+        "fenced JSON verdict block",
+        "same trigger set",
+        "per-record size input",
+        "sample record",
+        "allocated budget",
+        "escalation gates from that count",
+    ]:
+        if required_phrase not in complexity:
+            fail(f"progressive complexity reference is missing: {required_phrase}")
 
     for markdown_file in [SKILL, *sorted(REQUIRED_REFERENCES)]:
         fence_count = sum(
