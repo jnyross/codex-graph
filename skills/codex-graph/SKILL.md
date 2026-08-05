@@ -47,11 +47,11 @@ Also identify:
 - whether current official or community sources are needed.
 
 Before choosing the topology, read `references/progressive-complexity.md` and
-`references/topology-library.md`. Select the baseline tier as the lowest tier
-whose observable goal-specific trigger is already provably true. Justify the
-choice by naming the fired trigger and its evidence. Escalation is default-off;
-anything unproven must be a named run-time escalation gate, not an up-front
-node.
+`references/topology-library.md`. Tiers are cumulative: select the baseline as
+the lowest tier that satisfies every already-proven trigger (equivalently, the
+highest proven tier). Report every fired trigger and its evidence, not only the
+baseline tier's trigger. Escalation is default-off; anything unproven must be a
+named run-time escalation gate, not an up-front node.
 
 ## Design Part 1: Workflow Design
 
@@ -61,7 +61,11 @@ stages only behind named escalation gates.
 
 Apply these rules:
 
-1. Use the fewest nodes required by the baseline tier. L0 and L1 graphs of 3-5 nodes are correct and expected. More nodes require a named fired trigger; wider graphs are not better.
+1. Count only baseline executable nodes for minimal-node guidance. Exclude
+   conditional higher-tier stages, `P1`, and escalation gates from that count.
+   Use the fewest counted nodes required by the baseline tier. L0 and L1
+   baselines of 3-5 executable nodes are correct and expected. More counted
+   nodes require a named fired trigger; wider graphs are not better.
 2. Give every node a stable short ID such as `N1`, `N2A`, or `V1`, plus a concrete goal-specific label.
 3. At L2, parallelize only genuinely independent read-only discovery. At L3,
    parallelize independent validation lenses only after integration. Prefer
@@ -116,11 +120,14 @@ Read `references/code-mode-script-patterns.md` before writing the script. When t
 
 Build a complete, goal-specific JavaScript program that implements Part 1 one-for-one. The script must be ready to paste into Codex Code Mode after removing the Markdown fence. It must not rely on Node.js APIs, local imports, `console`, direct filesystem access, or direct network access. Repository and external operations must go through tools available on the Code Mode `tools` object.
 
-The script's `WORKFLOW` metadata must declare `P1`, the escalation gates,
-trigger IDs, thresholds, deterministic action mappings, `ESCALATION_CAP = 2`,
-and the one-repair invariant. `P1` must emit and validate verdict objects in
-the declared shape; malformed or missing verdicts fail closed. The terminal
-result must preserve every verdict and the action taken, including `none`.
+The script's `WORKFLOW` metadata must declare `P1` and escalation gates when
+`escalation` is not `none-declared`, trigger IDs, thresholds, deterministic
+action mappings, `ESCALATION_CAP = 2`, and the one-repair invariant. `P1` is a
+zero-worker, zero-task inline evaluation of evidence produced by the baseline
+stage; it never delegates or spawns a task. `E1` is a plain conditional.
+`P1` must emit and validate verdict objects in the declared shape; malformed or
+missing verdicts fail closed. The terminal result must preserve every verdict,
+including `not_evaluated`, and the action taken, including `none`.
 
 ### Runtime and tool binding
 
@@ -141,10 +148,13 @@ Draw the baseline path as the primary flow. Draw higher-tier stages as
 conditional stages behind explicit named escalation gates such as
 `E1{Escalate to L2?}`. Every declared node maps one-to-one to a script stage,
 gate, or terminal. Non-activated nodes are reported as skipped, not omitted.
-Every baseline graph includes cheap escalation probe node `P1` followed by the
-named gate `E1{Escalate?}`. `P1` evaluates every predeclared trigger and emits
-machine-readable verdicts with IDs, measured values, thresholds, evidence, and
-actions. A malformed or missing verdict fails closed and cannot promote.
+When a trigger is deferrable, include cheap inline probe node `P1` followed by
+plain conditional `E1{Escalate?}`. `P1` evaluates only the guard test for the
+next tier, at most one promotion per evaluation; tests above the next tier are
+reported as `not_evaluated`, distinct from `fired: false`. When no trigger is
+deferrable, declare `escalation: none-declared`, omit `P1` and `E1`, and justify
+that omission in the complexity-ladder section. P1 is never a worker or spawned
+task.
 The `WORKFLOW` metadata must include the baseline tier, each node's tier and
 activation condition, trigger definitions, the escalation cap, and the
 invariant that the repair allowance stays one across all tiers.
@@ -196,8 +206,8 @@ The final `text(...)` output must include:
 
 - terminal status: `passed`, `blocked`, or `failed`;
 - tier reached and baseline tier;
-- every trigger's ID, threshold, measured value, evidence, fired verdict, and
-  resulting action;
+- every trigger's ID, threshold, measured value, evidence, state (`fired`,
+  `not_fired`, or `not_evaluated`), and resulting action;
 - escalations used versus the escalation cap;
 - tiers and nodes not activated, reported as skipped;
 - objective and completed scope;
@@ -259,8 +269,10 @@ Write a code-mode script that implements this exact workflow and run it…
 
 Immediately clarify that the complete script below is the implementation: Codex should submit its raw JavaScript body to Code Mode and run it without redesigning the graph. The sentence is required even though the script has already been built.
 
-Under `## Complexity ladder`, document the baseline tier, the fired trigger and
-evidence, deferred tiers with their triggers, and the escalation cap.
+Under `## Complexity ladder`, document the baseline tier, every fired trigger
+and its evidence, deferred tiers with their triggers, the escalation cap, and
+whether `escalation: none-declared` permits omission of `P1` and `E1`. If L4 is
+possible, show the budget-derived cardinality threshold arithmetic.
 
 Under `## Script`, include one fenced `javascript` block containing the complete program. Markdown fences are for presentation only and must not be included when the raw program is submitted to Code Mode.
 
@@ -314,11 +326,23 @@ Before returning the paired deliverable, verify all of the following:
 
 - Both Part 1 and Part 2 are present in the required order.
 - The baseline is the lowest justified tier and the fired trigger is named.
+- The baseline satisfies every already-proven cumulative trigger, and every
+  fired trigger is reported.
 - Every non-baseline node has a fired or gated trigger.
+- `P1` is inline and zero-worker/zero-task, `E1` is conditional, or
+  `escalation: none-declared` justifies omitting both.
+- Tests above the next escalation tier are reported as `not_evaluated`, not
+  `fired: false`.
+- Any L4 cardinality threshold is derived from declared budgets rather than an
+  unexplained round number.
+- Minimal-node counts include baseline executable nodes only; conditional
+  stages, `P1`, and escalation gates are excluded.
+- P1 and escalation gates are excluded from baseline node counts.
 - Trigger IDs and thresholds are declared before execution and escalation
   actions map deterministically to named stages.
-- The baseline graph and script include probe node `P1`; malformed verdicts
-  fail closed.
+- When escalation is not `none-declared`, the baseline graph and script include
+  inline probe node `P1`; malformed verdicts fail closed. Otherwise the
+  omission of `P1` and `E1` is justified.
 - Escalation is bounded, cannot exceed its cap, and never demotes.
 - One repair allowance is used regardless of tier.
 - Skipped tiers and nodes are reported.

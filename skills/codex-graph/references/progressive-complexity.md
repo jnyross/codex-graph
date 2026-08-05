@@ -1,8 +1,10 @@
 # Progressive complexity ladder
 
-Use this ladder as the authority for graph complexity. The skill picks the
-lowest tier whose entry trigger is already provably true at design time.
-Anything unproven is a run-time escalation gate, not an up-front node.
+Use this ladder as the authority for graph complexity. Tiers are cumulative:
+the baseline is the lowest tier that satisfies every already-proven trigger
+(equivalently, the highest proven tier). Report every fired trigger, not only
+the baseline tier's trigger. Anything unproven is a run-time escalation gate,
+not an up-front node.
 
 ## Tiers
 
@@ -84,20 +86,48 @@ goal-specific evidence.
 
 ## Design-time and run-time split
 
-At design time, declare the baseline tier, the fired trigger, and its evidence.
-Select the lowest tier whose trigger is already true. Defer every unproven
-trigger to an explicit named run-time gate. Baseline nodes are always active;
-higher-tier nodes are conditional and are reported as skipped when not active.
-Escalation is default-off.
+At design time, declare the baseline tier, every fired trigger, and its
+evidence. Select the lowest tier that satisfies every already-proven trigger.
+Defer every unproven trigger to an explicit named run-time gate. Baseline nodes
+are always active; higher-tier nodes are conditional and are reported as
+skipped when not active. Escalation is default-off.
+
+`P1` is a zero-worker, zero-task inline evaluation of evidence already produced
+by the baseline stage. It never delegates or spawns a task. `E1` is a plain
+conditional gate. When the design proves that no trigger is deferrable because
+the scope is fully bounded and every trigger is resolved, declare
+`escalation: none-declared` and omit `P1` and `E1`; document that omission in
+the Complexity ladder section. Otherwise declare them as control nodes, but
+exclude both from the minimal baseline executable-node count.
+
+Count only baseline executable nodes for minimal-node guidance.
+Exclude conditional higher-tier stages, `P1`, and escalation gates from that count.
+Declared skipped nodes remain in the graph and metadata even though they do not
+inflate the baseline count.
 
 ## Executable escalation tests
 
 Declare this threshold set before execution and reuse it as part of the same
-acceptance contract; do not choose thresholds after observing results. Each
-baseline graph includes probe node `P1`, which runs these cheap tests after the
-baseline stage. A valid verdict has this shape:
-`{trigger_id, fired: true|false, evidence, measured, threshold}`. Missing or
-malformed verdicts fail closed: they do not escalate and are reported.
+acceptance contract; do not choose thresholds after observing results. When a
+cardinality threshold is needed, derive it from the already-declared budgets:
+the threshold is the number of records one serial owner can validate and
+normalize within the declared per-item output budget and handoff budget. Show
+the arithmetic in the design; do not use an unexplained round number.
+
+For example, if one normalized record requires 1,500 characters, the per-item
+output budget is 20,000 characters, and the handoff budget is 9,000 characters,
+the usable capacity is `min(floor(20000 / 1500), floor(9000 / 1500)) = 6`
+records. Declare `record_count > 6` as the L4 cardinality trigger before
+execution.
+
+Each baseline graph with deferred triggers includes probe node `P1`, which
+runs only the cheap guard test for the next tier after the baseline stage. A
+valid verdict has this shape:
+`{trigger_id, state: "fired"|"not_fired"|"not_evaluated", fired: true|false|null,
+evidence, measured, threshold, action}`. `not_evaluated` is distinct from
+`fired: false`: tests above the next tier are deferred and reported as
+`not_evaluated`. Missing or malformed verdicts fail closed, are reported with
+`state: "not_evaluated"` and `action: "none"`, and do not escalate.
 
 | Test ID | Cheap probe and measured value | Declared threshold | Fired verdict and action |
 |---|---|---|---|
@@ -108,10 +138,9 @@ malformed verdicts fail closed: they do not escalate and are reported.
 
 Each result must include the measured value and threshold, not just a prose
 claim. A fired test promotes to its declared next tier and action exactly; there
-is no improvised stage selection. Evaluate triggers in tier order, promote at
-most once per probe evaluation, and cap total promotions at 2. The fail-closed
-rule above applies to malformed or missing verdicts; record action `none` and
-do not promote.
+is no improvised stage selection. Evaluate only the next tier's guard test,
+promote at most once per probe evaluation, and cap total promotions at 2. Tests
+above the next tier are reported as `not_evaluated`, not as `fired: false`.
 
 ## Escalation action mapping
 
@@ -122,9 +151,9 @@ do not promote.
 | `T3-INDEPENDENT-LENSES` | `E3`, `V1A-V1D`, `G1` | Read-only validation lenses and root acceptance | Repair allowance stays one; cap stays four |
 | `T4-SHARDED-RECOVERY` | `E4`, `R1-R4`, `Q1`, `C1`, `H1` | Record-specific repair and resumability | No demotion; no extra repair; no new scope |
 
-The script must record the action taken or `none` for every verdict. A
-promotion never demotes: no demotion is permitted, and one repair total remains
-invariant at every tier.
+The script must record the action taken or `none` for every verdict, including
+`not_evaluated` and malformed verdicts. A promotion never demotes: no demotion
+is permitted, and one repair total remains invariant at every tier.
 
 ## Code Mode escalation pattern
 
@@ -157,19 +186,42 @@ let escalationsUsed = 0;
 const skippedTiers = [];
 const triggerVerdicts = [];
 
+function recordNotEvaluated(observation, afterTier) {
+  for (const tier of Object.keys(TIER_TESTS)) {
+    if (Number(tier.slice(1)) > afterTier) {
+      triggerVerdicts.push({
+        trigger_id: TIER_TESTS[tier],
+        state: "not_evaluated",
+        fired: null,
+        evidence: "deferred above the next tier",
+        measured: null,
+        threshold: observation.thresholdFor(TIER_TESTS[tier]),
+        action: "none",
+      });
+      skippedTiers.push(tier);
+    }
+  }
+}
+
 function maybeEscalate(observation) {
   const nextTier = `L${Number(currentTier.slice(1)) + 1}`;
   const triggerId = TIER_TESTS[nextTier];
   if (!triggerId || escalationsUsed >= ESCALATION_CAP) {
-    if (nextTier !== "L5") skippedTiers.push(nextTier);
+    recordNotEvaluated(observation, Number(currentTier.slice(1)));
     return false;
   }
   const raw = observation.verdictFor(triggerId);
   const valid = raw && typeof raw.fired === "boolean";
   const verdict = valid
-    ? { ...raw, trigger_id: triggerId, action: raw.fired ? TIER_ACTIONS[nextTier] : "none" }
+    ? {
+        ...raw,
+        trigger_id: triggerId,
+        state: raw.fired ? "fired" : "not_fired",
+        action: raw.fired ? TIER_ACTIONS[nextTier] : "none",
+      }
     : {
         trigger_id: triggerId,
+        state: "not_evaluated",
         fired: false,
         evidence: "malformed or missing verdicts fail closed",
         measured: null,
@@ -179,10 +231,12 @@ function maybeEscalate(observation) {
   triggerVerdicts.push(verdict);
   if (!valid || !verdict.fired) {
     skippedTiers.push(nextTier);
+    recordNotEvaluated(observation, Number(nextTier.slice(1)));
     return false;
   }
   currentTier = nextTier;
   escalationsUsed += 1;
+  recordNotEvaluated(observation, Number(currentTier.slice(1)));
   return true;
 }
 ```

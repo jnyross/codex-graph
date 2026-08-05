@@ -150,6 +150,11 @@ def main() -> None:
         "escalation cap",
         "always active at baseline",
         "reported as skipped",
+        "not_evaluated",
+        "none-declared",
+        "budget-derived cardinality threshold",
+        "baseline executable nodes only",
+        "P1 and escalation gates are excluded",
     ]:
         if required_phrase not in text:
             fail(f"missing required behavior: {required_phrase}")
@@ -222,6 +227,11 @@ def main() -> None:
         "Escalation action mapping",
         "probe node `P1`",
         "verdicts fail closed",
+        "derive it from the already-declared budgets",
+        "number of records one serial owner can validate and",
+        "not_evaluated",
+        "none-declared",
+        "Exclude conditional higher-tier stages, `P1`, and escalation gates from that count.",
     ]:
         if required_phrase not in complexity:
             fail(f"progressive complexity reference is missing: {required_phrase}")
