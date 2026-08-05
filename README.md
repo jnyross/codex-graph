@@ -39,10 +39,29 @@ If your Codex version does not support plugins, clone the repository and copy
 python3 skills/codex-graph/scripts/validate_skill.py
 ```
 
+## Versioning and releases
+
+The product version is kept in `VERSION` and mirrored in
+`.codex-plugin/plugin.json`. Releases use semantic versioning and are published
+from matching Git tags:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow verifies both version files, runs the validator, and
+creates the corresponding GitHub release with generated notes. Use
+`MAJOR.MINOR.PATCH`: increment the major version for breaking plugin changes,
+the minor version for backwards-compatible features, and the patch version for
+backwards-compatible fixes.
+
 ## Repository layout
 
 - `.agents/plugins/marketplace.json` — URL marketplace registration
 - `.codex-plugin/plugin.json` — Codex plugin manifest
+- `VERSION` — canonical product version used for GitHub releases
+- `.github/workflows/release.yml` — tag verification and release automation
 - `skills/codex-graph/SKILL.md` — main skill instructions
 - `skills/codex-graph/agents/openai.yaml` — Codex skill metadata
 - `skills/codex-graph/references/` — topology, lifecycle, script, and source guidance

@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          test "${TAG_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
+          test "$(node -p "require('./.codex-plugin/plugin.json').version")" = "$(tr -d '[:space:]' < VERSION)"
+
+      - name: Validate skill
+        run: python3 skills/codex-graph/scripts/validate_skill.py
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" --generate-notes --title "${{ github.ref_name }}"
