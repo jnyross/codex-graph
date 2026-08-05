@@ -6,6 +6,21 @@ the baseline is the lowest tier that satisfies every already-proven trigger
 the baseline tier's trigger. Anything unproven is a run-time escalation gate,
 not an up-front node.
 
+## Verdict states
+
+Every declared trigger has exactly one state:
+
+- `fired`: the guard was evaluated and its declared threshold was met.
+- `not_fired`: the guard was evaluated and its declared threshold was not met.
+- `not_evaluated`: the guard is deferred because the next-tier probe has not
+  reached it yet.
+- `not_applicable`: the trigger cannot apply because escalation is
+  `none-declared`, or because its prerequisite tier is not active.
+
+Do not use "deferred" as a state. A trigger above the next tier is
+`not_evaluated`; a structurally unavailable trigger is `not_applicable`. Every
+verdict object uses exactly one of these four states.
+
 ## Tiers
 
 ### L0 direct
@@ -88,9 +103,10 @@ goal-specific evidence.
 
 At design time, declare the baseline tier, every fired trigger, and its
 evidence. Select the lowest tier that satisfies every already-proven trigger.
-Defer every unproven trigger to an explicit named run-time gate. Baseline nodes
-are always active; higher-tier nodes are conditional and are reported as
-skipped when not active. Escalation is default-off.
+Represent every unproven but reachable trigger with an explicit named run-time
+gate. Baseline nodes are always active; higher-tier nodes are conditional and
+are reported as skipped when not active. Escalation is default-off. A trigger
+whose prerequisite tier is inactive is `not_applicable`, not `not_evaluated`.
 
 `P1` is a zero-worker, zero-task inline evaluation of evidence already produced
 by the baseline stage. It never delegates or spawns a task. `E1` is a plain
@@ -112,22 +128,35 @@ acceptance contract; do not choose thresholds after observing results. When a
 cardinality threshold is needed, derive it from the already-declared budgets:
 the threshold is the number of records one serial owner can validate and
 normalize within the declared per-item output budget and handoff budget. Show
-the arithmetic in the design; do not use an unexplained round number.
+the arithmetic in the design; do not use an unexplained round number. The
+per-record size input must also be part of the acceptance contract and state
+its basis: either measure it from a sample record or explicitly allocate it as
+a per-record budget. If no sample exists, declare the allocated budget as an
+assumption in `## Known context and assumptions`; an unstated estimate is
+non-conforming.
 
-For example, if one normalized record requires 1,500 characters, the per-item
-output budget is 20,000 characters, and the handoff budget is 9,000 characters,
-the usable capacity is `min(floor(20000 / 1500), floor(9000 / 1500)) = 6`
-records. Declare `record_count > 6` as the L4 cardinality trigger before
-execution.
+For example, if the acceptance contract explicitly allocates 1,500 characters
+per normalized record (the stated basis), the per-item output budget is 20,000
+characters, and the handoff budget is 9,000 characters, the usable capacity is
+`min(floor(20000 / 1500), floor(9000 / 1500)) = 6` records. Declare
+`record_count > 6` as the L4 cardinality trigger before execution.
 
 Each baseline graph with deferred triggers includes probe node `P1`, which
 runs only the cheap guard test for the next tier after the baseline stage. A
 valid verdict has this shape:
-`{trigger_id, state: "fired"|"not_fired"|"not_evaluated", fired: true|false|null,
-evidence, measured, threshold, action}`. `not_evaluated` is distinct from
-`fired: false`: tests above the next tier are deferred and reported as
-`not_evaluated`. Missing or malformed verdicts fail closed, are reported with
-`state: "not_evaluated"` and `action: "none"`, and do not escalate.
+`{trigger_id, state: "fired"|"not_fired"|"not_evaluated"|"not_applicable",
+fired: true|false|null, evidence, measured, threshold, action}`. The state
+set is exhaustive and exactly one state is required per trigger. `not_evaluated`
+is distinct from `fired: false`: tests above the next tier are deferred and
+reported as `not_evaluated`. A trigger blocked by `none-declared` escalation or
+an inactive prerequisite is `not_applicable`. Missing or malformed verdicts
+fail closed, are reported with `state: "not_evaluated"` and `action: "none"`,
+and do not escalate.
+
+Part 1 must include a fenced JSON verdict block containing one object per
+declared trigger with exactly these audit fields: `trigger_id`, `state`,
+`measured`, `threshold`, `evidence`, and `action`. Part 2 must declare exactly
+the same trigger set and states; prose measurements alone are non-conforming.
 
 | Test ID | Cheap probe and measured value | Declared threshold | Fired verdict and action |
 |---|---|---|---|
@@ -140,7 +169,8 @@ Each result must include the measured value and threshold, not just a prose
 claim. A fired test promotes to its declared next tier and action exactly; there
 is no improvised stage selection. Evaluate only the next tier's guard test,
 promote at most once per probe evaluation, and cap total promotions at 2. Tests
-above the next tier are reported as `not_evaluated`, not as `fired: false`.
+above the next tier are reported as `not_evaluated`, not as `fired: false`;
+triggers whose prerequisites are inactive are reported as `not_applicable`.
 
 ## Escalation action mapping
 
@@ -186,6 +216,21 @@ let escalationsUsed = 0;
 const skippedTiers = [];
 const triggerVerdicts = [];
 
+function recordNotApplicable(reason, tiers = Object.keys(TIER_TESTS)) {
+  for (const tier of tiers) {
+    triggerVerdicts.push({
+      trigger_id: TIER_TESTS[tier],
+      state: "not_applicable",
+      fired: null,
+      evidence: reason,
+      measured: null,
+      threshold: null,
+      action: "none",
+    });
+    skippedTiers.push(tier);
+  }
+}
+
 function recordNotEvaluated(observation, afterTier) {
   for (const tier of Object.keys(TIER_TESTS)) {
     if (Number(tier.slice(1)) > afterTier) {
@@ -206,6 +251,10 @@ function recordNotEvaluated(observation, afterTier) {
 function maybeEscalate(observation) {
   const nextTier = `L${Number(currentTier.slice(1)) + 1}`;
   const triggerId = TIER_TESTS[nextTier];
+  if (observation.escalation === "none-declared") {
+    recordNotApplicable("escalation is none-declared");
+    return false;
+  }
   if (!triggerId || escalationsUsed >= ESCALATION_CAP) {
     recordNotEvaluated(observation, Number(currentTier.slice(1)));
     return false;
@@ -222,7 +271,7 @@ function maybeEscalate(observation) {
     : {
         trigger_id: triggerId,
         state: "not_evaluated",
-        fired: false,
+        fired: null,
         evidence: "malformed or missing verdicts fail closed",
         measured: null,
         threshold: observation.thresholdFor(triggerId),
@@ -244,5 +293,7 @@ function maybeEscalate(observation) {
 Keep `escalationsUsed` bounded by an escalation cap of 2. Promote only; never
 demote; this is the no-demotion rule.
 Apply one repair total regardless of tier. Report the tier reached, every
-trigger with its evidence, escalations used versus cap, and skipped tiers or
-nodes. A skipped tier is not an omitted node.
+trigger with its evidence and exactly one state, escalations used versus cap,
+and skipped tiers or nodes. Use `recordNotApplicable` when the design declares
+`escalation: none-declared` or when a prerequisite tier is inactive. A skipped
+tier is not an omitted node.

@@ -127,7 +127,10 @@ zero-worker, zero-task inline evaluation of evidence produced by the baseline
 stage; it never delegates or spawns a task. `E1` is a plain conditional.
 `P1` must emit and validate verdict objects in the declared shape; malformed or
 missing verdicts fail closed. The terminal result must preserve every verdict,
-including `not_evaluated`, and the action taken, including `none`.
+including `fired`, `not_fired`, `not_evaluated`, and `not_applicable`, and the
+action taken, including `none`. Every trigger has exactly one of those four
+states. The four verdict states are `fired`, `not_fired`, `not_evaluated`, and
+`not_applicable`.
 
 ### Runtime and tool binding
 
@@ -153,8 +156,9 @@ plain conditional `E1{Escalate?}`. `P1` evaluates only the guard test for the
 next tier, at most one promotion per evaluation; tests above the next tier are
 reported as `not_evaluated`, distinct from `fired: false`. When no trigger is
 deferrable, declare `escalation: none-declared`, omit `P1` and `E1`, and justify
-that omission in the complexity-ladder section. P1 is never a worker or spawned
-task.
+that omission in the complexity-ladder section. A trigger whose prerequisite
+tier is inactive is reported as `not_applicable`, not `not_evaluated`. P1 is
+never a worker or spawned task.
 The `WORKFLOW` metadata must include the baseline tier, each node's tier and
 activation condition, trigger definitions, the escalation cap, and the
 invariant that the repair allowance stays one across all tiers.
@@ -207,7 +211,7 @@ The final `text(...)` output must include:
 - terminal status: `passed`, `blocked`, or `failed`;
 - tier reached and baseline tier;
 - every trigger's ID, threshold, measured value, evidence, state (`fired`,
-  `not_fired`, or `not_evaluated`), and resulting action;
+  `not_fired`, `not_evaluated`, or `not_applicable`), and resulting action;
 - escalations used versus the escalation cap;
 - tiers and nodes not activated, reported as skipped;
 - objective and completed scope;
@@ -272,7 +276,11 @@ Immediately clarify that the complete script below is the implementation: Codex 
 Under `## Complexity ladder`, document the baseline tier, every fired trigger
 and its evidence, deferred tiers with their triggers, the escalation cap, and
 whether `escalation: none-declared` permits omission of `P1` and `E1`. If L4 is
-possible, show the budget-derived cardinality threshold arithmetic.
+possible, show the budget-derived cardinality threshold arithmetic and the
+per-record size basis. Include a fenced JSON verdict block with one entry per
+declared trigger using `trigger_id`, `state`, `measured`, `threshold`, `evidence`,
+and `action`. Part 1 and Part 2 must declare exactly the same trigger set and
+the same verdict states.
 
 Under `## Script`, include one fenced `javascript` block containing the complete program. Markdown fences are for presentation only and must not be included when the raw program is submitted to Code Mode.
 
@@ -332,8 +340,14 @@ Before returning the paired deliverable, verify all of the following:
   `escalation: none-declared` justifies omitting both.
 - Tests above the next escalation tier are reported as `not_evaluated`, not
   `fired: false`.
+- The verdict state set is exactly `fired`, `not_fired`, `not_evaluated`, or
+  `not_applicable`; structurally unavailable triggers use `not_applicable`.
+- `## Complexity ladder` contains a fenced JSON verdict block with one entry
+  per declared trigger, and Part 1 and Part 2 use the same trigger set.
 - Any L4 cardinality threshold is derived from declared budgets rather than an
   unexplained round number.
+- The per-record size input states whether it is measured from a sample or
+  explicitly allocated as a budget; an unstated estimate is rejected.
 - Minimal-node counts include baseline executable nodes only; conditional
   stages, `P1`, and escalation gates are excluded.
 - Trigger IDs and thresholds are declared before execution and escalation
