@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -103,6 +104,16 @@ def rewrite_release_files(
     changelog_path.write_text(changelog)
 
 
+def release_subjects(commits: Iterable[str]) -> list[str]:
+    """Return subjects suitable for release notes and the changelog."""
+    return [
+        commit.splitlines()[0]
+        for commit in commits
+        if commit.splitlines()
+        and not re.match(r"^Merge pull request #\d+ from ", commit.splitlines()[0])
+    ]
+
+
 def git_output(root: Path, *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=root, text=True)
 
@@ -111,7 +122,7 @@ def release_commits(root: Path) -> tuple[str | None, list[str]]:
     tags = git_output(root, "tag", "--list", "v*.*.*", "--sort=-version:refname").splitlines()
     latest_tag = tags[0] if tags else None
     revision_range = f"{latest_tag}..HEAD" if latest_tag else "HEAD"
-    log = git_output(root, "log", revision_range, "--format=%s%x00%b%x1e")
+    log = git_output(root, "log", "--no-merges", revision_range, "--format=%s%x00%b%x1e")
     messages = []
     for record in log.split("\x1e"):
         fields = record.strip("\x00\n").split("\x00", 1)
@@ -131,9 +142,9 @@ def main() -> int:
     tags = git_output(root, "tag", "--list", "v*.*.*").splitlines()
     version = compute_next_version(current, latest_tag, commits, tags)
     if version is None:
-        print("No releasable commits since the last release tag.")
+        print("No releasable commits since the last release tag.", file=sys.stderr)
         return 0
-    subjects = [commit.splitlines()[0] for commit in commits]
+    subjects = release_subjects(commits)
     rewrite_release_files(root, version, subjects, args.date)
     print(version)
     return 0

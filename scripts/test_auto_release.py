@@ -4,9 +4,19 @@ import unittest
 from pathlib import Path
 
 try:
-    from auto_release import compute_next_version, determine_bump, rewrite_release_files
+    from auto_release import (
+        compute_next_version,
+        determine_bump,
+        release_subjects,
+        rewrite_release_files,
+    )
 except ModuleNotFoundError:
-    from scripts.auto_release import compute_next_version, determine_bump, rewrite_release_files
+    from scripts.auto_release import (
+        compute_next_version,
+        determine_bump,
+        release_subjects,
+        rewrite_release_files,
+    )
 
 
 class AutoReleaseTests(unittest.TestCase):
@@ -24,6 +34,17 @@ class AutoReleaseTests(unittest.TestCase):
         self.assertEqual(
             compute_next_version("0.2.0", "v0.2.0", ["feat: x"], ["v0.2.0", "v0.3.0"]),
             "0.3.1",
+        )
+
+    def test_merge_subjects_are_excluded_from_release_subjects(self):
+        self.assertEqual(
+            release_subjects(
+                [
+                    "Merge pull request #12 from example/feature",
+                    "feat: add feature",
+                ]
+            ),
+            ["feat: add feature"],
         )
 
     def test_rewrite_release_files(self):
