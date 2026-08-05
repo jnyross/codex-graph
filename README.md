@@ -68,26 +68,21 @@ only change.
 ## Versioning and releases
 
 The product version is kept in `VERSION` and mirrored in
-`.codex-plugin/plugin.json`. Releases use semantic versioning and are published
-from matching Git tags:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The release workflow verifies both version files, runs the validator, and
-creates the corresponding GitHub release with generated notes. Use
-`MAJOR.MINOR.PATCH`: increment the major version for breaking plugin changes,
-the minor version for backwards-compatible features, and the patch version for
-backwards-compatible fixes.
+`.codex-plugin/plugin.json`. Every push to `main` runs the automatic release
+workflow. It considers commits since the latest `vX.Y.Z` tag and derives the
+highest semantic-version bump: `BREAKING CHANGE` (or `!`) is major, `feat` is
+minor, and other commits are patch releases. The workflow updates both version
+files and `CHANGELOG.md`, commits them back to `main`, tags the commit, and
+creates a GitHub release with generated notes. Release commits are ignored by
+the workflow to prevent loops. Use conventional commit subjects such as
+`feat: add ...`, `fix: correct ...`, or `feat!: change ...`.
 
 ## Repository layout
 
 - `.agents/plugins/marketplace.json` — URL marketplace registration
 - `.codex-plugin/plugin.json` — Codex plugin manifest
 - `VERSION` — canonical product version used for GitHub releases
-- `.github/workflows/release.yml` — tag verification and release automation
+- `.github/workflows/release.yml` — automatic versioning and release automation
 - `skills/codex-graph/SKILL.md` — main skill instructions
 - `skills/codex-graph/agents/openai.yaml` — Codex skill metadata
 - `skills/codex-graph/references/` — topology, lifecycle, script, and source guidance
