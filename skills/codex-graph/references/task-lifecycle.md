@@ -82,39 +82,29 @@ Adapt field names and arguments to the active declarations. Keep the bounded sta
 
 ## 3. Wait and read separately
 
-Use the wait tool to pause until progress, completion, attention, or a bounded timeout. Then read the task. A timeout is not proof of failure.
-
-Use named limits:
-
-```javascript
-const WAIT_TIMEOUT_MS = 120000;
-const COMPLETION_WAIT_ATTEMPTS = 15;
-const COMPLETION_DEADLINE_MS = 30 * 60 * 1000;
-const MIN_ACTIVE_POLL_DELAY_MS = 10000;
-const MAX_READ_ITEM_CHARS = 20000;
-```
-
-Set `const collectionStartedAt = Date.now()` before the loop. Each loop is permitted only while both conditions remain true:
-
-- the attempt count is within `COMPLETION_WAIT_ATTEMPTS`;
-- `Date.now() - collectionStartedAt < COMPLETION_DEADLINE_MS`.
-
-After the wait and read calls, measure actual elapsed time for that check. If the task is still active and the wait returned sooner than `MIN_ACTIVE_POLL_DELAY_MS`, sleep for the remaining minimum delay, capped by the wall-clock deadline. This prevents an early-returning wait implementation from consuming a 30-minute budget in seconds.
+Use the wait tool to pause until progress, completion, attention, or a
+tool-supported timeout. Then read the task. A timeout is not proof of failure.
+If the active wait implementation can return immediately or run indefinitely,
+add a task-specific deadline or polling strategy based on that observed
+behavior; do not copy a universal timeout or attempt count.
 
 For each attempt:
 
 1. Call the wait tool with the ready `threadId` and `hostId` when required.
-2. Read the newest task turn with `maxOutputCharsPerItem` no greater than 20,000, or a lower declared cap.
+2. Read the newest task turn using `maxOutputCharsPerItem` or the active
+   tool's declared item limit, when one exists.
 3. Detect an explicit failed or interrupted terminal turn.
 4. Recursively inspect `turns` and their structured `items` for the required JSON handoff.
 5. Accept the handoff only when its `node_id`, status, and task-specific schema match.
-6. Continue within the declared attempt budget when the task is active or the handoff is not terminal.
+6. Continue while the task is active or the handoff is not terminal. Stop only
+   at an active-tool failure, explicit terminal failure, or a task-specific
+   deadline introduced for an observed operational need.
 
 Do not assume output is one text field. Do not treat an unchanged wait snapshot as failure.
 
 ## 4. Make handoffs fit before execution
 
-Set a hard worker-output contract, normally 8,000-9,000 characters. Require one JSON object with decisive evidence only.
+Require one JSON object with decisive evidence only. Do not set a character budget until the active tool declares one or an observed run proves it is needed.
 
 Treat that object as a compact routing index. It must not become the only copy of evidence needed for acceptance. Give records stable IDs and preserve complete source URLs, roles, dates, locators, and required fields in an approved durable artifact. Return its path or identifier and hash. Do not substitute unexplained source aliases for required evidence.
 
@@ -124,13 +114,15 @@ Use these overflow routes:
 - `unresolved_questions` for open issues;
 - an approved durable artifact with a returned path, identifier, and hash when evidence must stay complete.
 
-Integration inputs must be complete JSON. If a handoff is too large, fail with the actual size and node ID. Never slice serialized JSON.
+Integration inputs must be complete JSON. Concatenate upstream handoffs when they fit the active tool contract. If an observed payload limit is reached, pass a compact join manifest or artifact references and use staged fan-in only for the affected portion. If a handoff or join is too large, report the actual size and preserve resumable handles. Never slice serialized JSON.
 
 Validate every handoff against one canonical schema. If a worker uses a compact transport shape, normalize it deterministically before the next node. Final formatting must consume only canonical validated records and must fail closed on missing required fields rather than emitting `null` values.
 
 Run declared transport adapters before shape and cardinality guards. An adapter must be deterministic, resolve every referenced stable ID exactly once, preserve the complete canonical record table, and reject missing, duplicate, or unknown IDs. Do not infer an adapter for an undeclared shape during execution.
 
-Read tools can impose a per-item limit even when the outer Code Mode result budget is larger. Set both budgets explicitly and design to the smaller boundary.
+Read tools can impose a per-item limit even when the outer Code Mode result
+budget is larger. Use the active declaration; do not invent a smaller
+application-level budget.
 
 ## 5. Report exact failures and live state
 
@@ -165,14 +157,15 @@ Validate each active handle before use:
 
 Add the validated handle to the live-handle registry and collect it. Do not call the create tool for that active node. Reject a stale, ambiguous, or policy-mismatched handle with its exact reason. Do not require or fabricate handles for not-started nodes.
 
-If the collection-attempt budget expires while a task is still active, build a checkpoint containing:
+If an observed operational limit requires stopping while a task is still active,
+build a checkpoint containing:
 
 - the run tag and resolved project ID;
 - completed node IDs and their compact handoffs;
 - active node IDs and full live handles;
 - not-started node IDs;
 - executed and skipped stages;
-- the wait timeout and attempt count already used.
+- the active-tool limit or observed condition that caused the stop.
 
 Return the checkpoint with the blocked result. A later run resumes active nodes, reuses completed handoffs, and starts future nodes normally. It does not repeat completed work.
 
