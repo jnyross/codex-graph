@@ -1,0 +1,35 @@
+{
+  "name": "codex-graph",
+  "version": "0.1.0",
+  "description": "Design bounded agent graphs and generate runnable Codex Code Mode workflows.",
+  "author": {
+    "name": "jnyross",
+    "url": "https://github.com/jnyross"
+  },
+  "homepage": "https://github.com/jnyross/codex-graph",
+  "repository": "https://github.com/jnyross/codex-graph",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "code-mode",
+    "agent-graphs",
+    "workflows",
+    "multi-agent"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Graph",
+    "shortDescription": "Design agent graphs and runnable Code Mode workflows",
+    "longDescription": "Turn a free-form goal into a bounded agent graph and a matching paste-ready Codex Code Mode JavaScript workflow.",
+    "developerName": "jnyross",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Instructions"
+    ],
+    "websiteURL": "https://github.com/jnyross/codex-graph",
+    "defaultPrompt": [
+      "Use Codex Graph to design this goal as a bounded agent workflow and generate the matching runnable Code Mode script."
+    ],
+    "brandColor": "#111111"
+  }
+}
