@@ -325,7 +325,6 @@ References are inputs, not proof they were consulted during execution. Worker pr
 Before returning the paired deliverable, verify all of the following:
 
 - Both Part 1 and Part 2 are present in the required order.
-- The baseline is the lowest justified tier and the fired trigger is named.
 - The baseline satisfies every already-proven cumulative trigger, and every
   fired trigger is reported.
 - Every non-baseline node has a fired or gated trigger.
@@ -337,7 +336,6 @@ Before returning the paired deliverable, verify all of the following:
   unexplained round number.
 - Minimal-node counts include baseline executable nodes only; conditional
   stages, `P1`, and escalation gates are excluded.
-- P1 and escalation gates are excluded from baseline node counts.
 - Trigger IDs and thresholds are declared before execution and escalation
   actions map deterministically to named stages.
 - When escalation is not `none-declared`, the baseline graph and script include
