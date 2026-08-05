@@ -114,7 +114,7 @@ Do not assume output is one text field. Do not treat an unchanged wait snapshot 
 
 ## 4. Make handoffs fit before execution
 
-Set a hard worker-output contract, normally 8,000-9,000 characters. Require one JSON object with decisive evidence only.
+Set a hard per-worker output contract, normally 8,000-9,000 characters. Require one JSON object with decisive evidence only. Declare a separate join-manifest budget; the worker limit is not a combined payload limit.
 
 Treat that object as a compact routing index. It must not become the only copy of evidence needed for acceptance. Give records stable IDs and preserve complete source URLs, roles, dates, locators, and required fields in an approved durable artifact. Return its path or identifier and hash. Do not substitute unexplained source aliases for required evidence.
 
@@ -124,7 +124,7 @@ Use these overflow routes:
 - `unresolved_questions` for open issues;
 - an approved durable artifact with a returned path, identifier, and hash when evidence must stay complete.
 
-Integration inputs must be complete JSON. If a handoff is too large, fail with the actual size and node ID. Never slice serialized JSON.
+Integration inputs must be complete JSON. Do not concatenate all upstream handoffs into one validation input or run the aggregate through `boundedJson` with the worker limit. Pass a compact join manifest containing node IDs, statuses, record IDs, artifact identifiers, and hashes; validation reads preserved artifacts or consumes bounded manifest shards. If a handoff or join manifest is too large, fail with the actual size, budget, node/shard ID, and resumable handles. Never slice serialized JSON.
 
 Validate every handoff against one canonical schema. If a worker uses a compact transport shape, normalize it deterministically before the next node. Final formatting must consume only canonical validated records and must fail closed on missing required fields rather than emitting `null` values.
 

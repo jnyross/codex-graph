@@ -139,14 +139,14 @@ Accept explicit checkpoints and resume handles for long graphs. Validate active 
 
 When the bounded collection budget expires while a task is still active, return a resumable checkpoint. Preserve completed handoffs, active handles, not-started node IDs, and the exact wait budget used. Do not repeat completed research in the next run.
 
-## Bound handoffs before joining
+## Bound handoffs and joins before validation
 
-Require each worker to return one complete JSON object under a conservative budget, normally 8,000-9,000 characters. Keep decisive evidence in the handoff. Put overflow candidates in an `expansion_queue`, or store large evidence in an approved durable artifact and return its path or identifier.
+Require each worker to return one complete JSON object under a conservative per-worker budget, normally 8,000-9,000 characters. Keep decisive evidence in the handoff. Put overflow candidates in an `expansion_queue`, or store large evidence in an approved durable artifact and return its path or identifier.
 
 The compact JSON is a routing index, not the authoritative evidence store. For evidence-heavy work, give each record a stable ID and preserve complete URLs, source roles, dates, locators, and extracts in the durable artifact. Return the artifact identifier and hash with the compact record index. Do not compress required evidence into unexplained aliases such as `S1`.
 
 ```javascript
-function boundedJson(value, maxChars = 9000) {
+function boundedJson(value, maxChars) {
   const rendered = JSON.stringify(value, null, 2);
   if (rendered.length > maxChars) {
     throw new Error(`Complete handoff exceeds ${maxChars} characters`);
@@ -155,7 +155,23 @@ function boundedJson(value, maxChars = 9000) {
 }
 ```
 
-Never slice serialized JSON. It creates malformed or incomplete decision inputs.
+Declare `WORKER_HANDOFF_MAX_CHARS` and `JOIN_MANIFEST_MAX_CHARS` in the workflow contract; do not hide either budget in a helper default. `boundedJson(workerHandoff, WORKER_HANDOFF_MAX_CHARS)` may validate one worker result, but `boundedJson({ handoffs }, WORKER_HANDOFF_MAX_CHARS)` is invalid because it treats a combined join as one worker handoff.
+
+Build joins from references rather than embedding every handoff:
+
+```javascript
+function joinManifest(handoffs) {
+  return handoffs.map(({ nodeId, status, recordIds, artifact }) => ({
+    nodeId,
+    status,
+    recordIds,
+    artifactId: artifact?.id,
+    artifactHash: artifact?.hash,
+  }));
+}
+```
+
+Validate the manifest against `JOIN_MANIFEST_MAX_CHARS`. If it does not fit, create bounded validation shards containing manifest entries, preserve their exact node and artifact handles, and validate each shard independently before one serial root gate. Never slice serialized JSON or delay validation by passing the combined payload through the worker limit.
 
 ## Freeze one acceptance and schema contract
 
