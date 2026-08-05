@@ -227,7 +227,10 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
    otherwise run indefinitely.
 9. Read task results through their structured turns and `items`. Respect
    `maxOutputCharsPerItem` or any other active tool-declared read limit when one
-   exists; do not assume the result is one flat text field.
+   exists; for the current task-read declaration, never request more than
+   `20000`. Carry each returned pagination cursor (such as `afterCursor`) into
+   the next collection call; unchanged snapshots must not consume collection
+   rounds. Do not assume the result is one flat text field.
 10. Pass complete structured handoffs by default. Add a payload budget only
    when the active tool declares one or an observed run demonstrates a limit.
    Keep large evidence in an approved durable artifact when needed, and never
