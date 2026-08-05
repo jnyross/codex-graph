@@ -54,6 +54,29 @@ highest proven tier). Report every fired trigger and its evidence, not only the
 baseline tier's trigger. Escalation is default-off; anything unproven must be a
 named run-time escalation gate, not an up-front node.
 
+## Separate artifact lifecycle from the work graph
+
+Distinguish the durable artifacts needed to seed, evaluate, or score work from
+the graph that repeatedly performs the work:
+
+- Create or curate prerequisite data artifacts separately from the core graph.
+  Examples include eval cases, fixtures, benchmark corpora, rubrics, reference
+  answers, and seed datasets.
+- Version those artifacts and give the graph stable references to them as
+  inputs. Do not add artifact creation, fixture generation, or eval-corpus
+  construction as executable work nodes merely because the graph consumes the
+  result.
+- Keep scoring and evaluation harnesses outside the core work graph. The graph
+  may emit outputs and evidence, and may run a declared acceptance check against
+  an existing evaluator, but it must not conflate producing the work with
+  producing the evaluator or its score.
+- If the user explicitly asks to create or update an eval or other prerequisite
+  artifact, design that as a separate artifact-lifecycle deliverable with its
+  own contract and validation. Reference its resulting artifact from the
+  repeatable work graph rather than nesting its creation in that graph.
+- Treat packaging, seeding, scoring, and post-run analysis as external setup or
+  evaluation phases unless they are themselves the user's repeatable work.
+
 ## Design Part 1: Workflow Design
 
 Create a goal-specific directed acyclic workflow with a minimal baseline and an
@@ -92,6 +115,9 @@ Apply these rules:
 11. Use Mermaid `flowchart TD` by default. Use a clean text graph only when Mermaid would reduce clarity.
 12. Label important edges with their dependency or gate condition.
 13. Ensure each executable node has defined inputs, responsibility, read/write scope, required output, and completion evidence.
+14. Keep the graph focused on repeatable work execution. Prerequisite artifact
+    creation and post-run scoring are external phases unless explicitly named as
+    the repeatable task; represent their stable outputs as graph inputs.
 
 ### Node contracts
 
@@ -227,8 +253,10 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
 
 ### Self-testing and self-improvement
 
-When self-testing is active, add the stages `T0` (freeze the acceptance contract and
-write the smallest candidate skill bundle), `T1` (launch one isolated child
+When self-testing is active, treat candidate packaging and the evaluation
+harness as external artifacts around the work graph. Add the stages `T0`
+(freeze the acceptance contract and write the smallest candidate skill bundle),
+`T1` (launch one isolated child
 thread with that bundle), `T2` (collect the child terminal result and evidence),
 `G2` (accept only an explicit passing terminal result), and conditional `R2`
 (root-cause repair followed by one re-run). The child must not delegate, invoke

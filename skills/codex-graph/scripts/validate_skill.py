@@ -163,6 +163,10 @@ def main() -> None:
         "isolated child thread",
         "roadmap items",
         "bounded self-test repair",
+        "Separate artifact lifecycle from the work graph",
+        "stable references to them as",
+        "Keep scoring and evaluation harnesses outside the core work graph",
+        "repeatable work execution",
     ]:
         if required_phrase not in text:
             fail(f"missing required behavior: {required_phrase}")
@@ -207,6 +211,9 @@ def main() -> None:
         "One repair and re-run",
         "fresh child thread",
         "still-live handles",
+        "evaluation harness outside the work graph",
+        "fixed eval cases",
+        "Scoring remains in the harness",
     ]:
         if required_phrase not in self_testing:
             fail(f"self-testing reference is missing: {required_phrase}")
@@ -223,11 +230,23 @@ def main() -> None:
         "canonical record schema",
         "record-specific correction shards",
         "transport forms and their adapters",
+        "Keep prerequisite artifacts outside the graph",
+        "separate artifact lifecycle",
+        "stable references to prerequisite artifacts",
     ]:
         if required_phrase not in patterns:
             fail(f"code patterns are missing verified graph lesson: {required_phrase}")
 
     topology = (ROOT / "references" / "topology-library.md").read_text(encoding="utf-8")
+    for required_phrase in [
+        "Artifact boundary",
+        "Create and version prerequisite artifacts separately",
+        "scoring",
+        "not graph nodes",
+    ]:
+        if required_phrase not in topology:
+            fail(f"topology reference is missing artifact boundary rule: {required_phrase}")
+
     for node_id in ("V1A", "V1B", "V1C", "V1D", "G1"):
         if node_id not in topology:
             fail(f"research audit fan-out is missing node: {node_id}")

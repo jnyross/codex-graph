@@ -4,7 +4,17 @@ Use this reference when the user asks the skill to test, package, monitor, or
 improve a generated workflow. Self-testing validates the generated artifact; it
 does not execute the user's underlying goal in the parent turn.
 
-## 1. Freeze the candidate contract
+## 1. Keep the evaluation harness outside the work graph
+
+Self-testing is an evaluation harness around a candidate work graph, not a
+reason to add packaging, eval generation, or scoring nodes to that graph.
+Create and version the candidate bundle, fixed eval cases, rubric, and expected
+evidence as separate artifacts. The child receives stable references to those
+inputs; it exercises the candidate graph and returns outputs and evidence.
+Scoring remains in the harness, while the candidate graph remains focused on
+repeatable work execution.
+
+## 2. Freeze the candidate contract
 
 Before starting a child thread, record a candidate bundle with:
 
@@ -25,7 +35,7 @@ the candidate with a newly designed workflow. If packaging or artifact storage
 is unavailable, use the exact bundle in the child prompt and report that
 non-portable fallback; do not claim it was installed or invokable elsewhere.
 
-## 2. Use one bounded test run
+## 3. Use one bounded test run
 
 The self-test graph is:
 
@@ -70,7 +80,7 @@ Reject malformed, missing, or prose-only handoffs. `status: passed` without
 acceptance evidence is not a pass. `blocked` remains blocked unless the
 missing access or approval is explicitly resolved; do not repair around it.
 
-## 3. Build the observed roadmap
+## 4. Build the observed roadmap
 
 The roadmap is produced after collection from actual child evidence. Each item
 has an ID, observed symptom, root-cause hypothesis, supporting evidence,
@@ -79,7 +89,7 @@ hypothesis. Include successful observations when they reveal a useful
 regression test or reusable guardrail. Keep the roadmap outside the candidate
 acceptance contract so it cannot expand the current test scope.
 
-## 4. One repair and re-run
+## 5. One repair and re-run
 
 If `G2` fails for a fixable candidate defect, `R2` performs one smallest
 evidence-led repair. The parent owns the repair; the child never edits the
@@ -95,7 +105,7 @@ both runs, the root-cause evidence, the repair diff or rationale, and the
 roadmap. A later invocation may consume that roadmap as a new, explicitly
 scoped test goal.
 
-## 5. Terminal result requirements
+## 6. Terminal result requirements
 
 When active, the parent terminal object includes:
 
