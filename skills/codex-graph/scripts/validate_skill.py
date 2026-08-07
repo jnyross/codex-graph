@@ -12,6 +12,11 @@ import re
 import sys
 from pathlib import Path
 
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+import graph_coherence  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "SKILL.md"
 OPENAI_YAML = ROOT / "agents" / "openai.yaml"
@@ -167,6 +172,9 @@ def main() -> None:
         "stable references to them as",
         "Keep scoring and evaluation harnesses outside the core work graph",
         "repeatable work execution",
+        "complete and reachable",
+        "Many files \u2260 parallel",
+        "graph_coherence.py",
     ]:
         if required_phrase not in text:
             fail(f"missing required behavior: {required_phrase}")
@@ -283,6 +291,19 @@ def main() -> None:
     ]:
         if required_phrase not in complexity:
             fail(f"progressive complexity reference is missing: {required_phrase}")
+
+    # Structural coherence of every Mermaid diagram in the bundle.
+    # A diagram with an orphan, a dead end, or an unreachable node is not
+    # executable as designed, regardless of how the prose describes it.
+    for markdown_file in [SKILL, ROOT / "references" / "topology-library.md"]:
+        problems = graph_coherence.check_text(
+            markdown_file.read_text(encoding="utf-8")
+        )
+        if problems:
+            fail(
+                f"{markdown_file.relative_to(ROOT)} has incoherent diagram(s): "
+                + "; ".join(problems[:6])
+            )
 
     for markdown_file in [SKILL, *sorted(REQUIRED_REFERENCES)]:
         fence_count = sum(
