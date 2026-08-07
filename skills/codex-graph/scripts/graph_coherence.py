@@ -43,10 +43,13 @@ class Graph:
         self.children: Dict[str, List[str]] = {n: [] for n in nodes}
         self.parents: Dict[str, List[str]] = {n: [] for n in nodes}
         for a, b in edges:
-            self.outdeg[a] += 1
-            self.indeg[b] += 1
-            self.children[a].append(b)
-            self.parents[b].append(a)
+            if a in self.outdeg:
+                self.outdeg[a] += 1
+            if b in self.indeg:
+                self.indeg[b] += 1
+            if a in self.children and b in self.parents:
+                self.children[a].append(b)
+                self.parents[b].append(a)
 
     def terminals(self) -> List[str]:
         return [n for n in self.nodes if self.outdeg[n] == 0]
@@ -66,7 +69,7 @@ def parse_flowchart(body: str) -> Graph:
     edges: List[Tuple[str, str]] = []
     for em in _EDGE_RE.finditer(body):
         a, b = em.groups()
-        if a in nodes and b in nodes and a != b:
+        if a != b:
             edges.append((a, b))
     return Graph(nodes, labels, edges)
 
@@ -178,6 +181,10 @@ _SELFTEST = {
         "    L[Lost node] --> B[Lost node 2]\n"
         "    B --> L\n"
     ),
+    "undefined_edge": (
+        "flowchart TD\n"
+        "    A[Start] --> B\n"
+    ),
 }
 
 
@@ -195,6 +202,7 @@ def selftest() -> int:
         ("orphan", "orphaned nodes"),
         ("dead_end", "cannot reach any terminal"),
         ("unreachable", "unreachable from any start"),
+        ("undefined_edge", "edge references undefined node"),
     ]:
         problems = check_text(_SELFTEST[name])
         if not any(expect_have in p for p in problems):
