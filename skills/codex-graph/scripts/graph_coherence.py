@@ -139,13 +139,53 @@ def _clean_label(raw: str) -> str:
     return raw.strip().strip("[({])}").strip().strip('"').strip()
 
 
+def _split_statements(line: str) -> List[str]:
+    """Split a line into statements, ignoring `;` and `%%` inside labels.
+
+    Mermaid treats `;` as a separator and `%%` as a comment only outside node
+    text, so a label like `A["Fetch data; parse"]` must stay in one piece.
+    """
+    statements: List[str] = []
+    current: List[str] = []
+    depth = 0
+    quoted = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quoted:
+            if char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "[({":
+            depth += 1
+        elif char in "])}":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            if line.startswith("%%", index):
+                break
+            if char == ";":
+                statements.append("".join(current))
+                current = []
+                index += 1
+                continue
+        current.append(char)
+        index += 1
+    statements.append("".join(current))
+    return statements
+
+
 def _parse_statement(
     stmt: str,
     nodes: List[str],
     labels: Dict[str, str],
     edges: List[Tuple[str, str]],
-) -> None:
-    """Parse one flowchart statement, including chained links and `&` groups."""
+) -> List[str]:
+    """Parse one statement; return every id it mentions (declared or referenced).
+
+    Chained links and `&` groups are supported.
+    """
+    seen: List[str] = []
 
     def declare(node_id: str, label: Optional[str]) -> None:
         # Only a shape declaration defines a node; a bare id is a reference,
@@ -167,16 +207,18 @@ def _parse_statement(
                 index += 1
             match = _ID_RE.match(stmt, index)
             if not match:
-                return
+                return seen
             node_id = match.group(0)
             index = match.end()
             label: Optional[str] = None
             if index < length and stmt[index] in _SHAPE_OPENERS:
                 scanned = _scan_shape(stmt, index)
                 if scanned is None:
-                    return
+                    return seen
                 label, index = scanned
             declare(node_id, label)
+            if node_id not in seen:
+                seen.append(node_id)
             group.append(node_id)
             probe = index
             while probe < length and stmt[probe].isspace():
@@ -202,14 +244,15 @@ def _parse_statement(
         previous = group
         link = _LINK_RE.match(stmt, index)
         if not link:
-            return
+            return seen
         direction = _link_direction(link.group(0))
         index = link.end()
         if index < length and stmt[index] == "|":
             close = stmt.find("|", index + 1)
             if close == -1:
-                return
+                return seen
             index = close + 1
+    return seen
 
 
 def _expand_container_edges(
@@ -249,9 +292,7 @@ def parse_flowchart(body: str) -> Graph:
     members: Dict[str, List[str]] = {}
     open_containers: List[str] = []
     statements = [
-        stmt
-        for raw_line in body.splitlines()
-        for stmt in raw_line.split("%%", 1)[0].split(";")
+        stmt for raw_line in body.splitlines() for stmt in _split_statements(raw_line)
     ]
     for raw_statement in statements:
         line = raw_statement.strip()
@@ -271,11 +312,13 @@ def parse_flowchart(body: str) -> Graph:
             elif head == "end" and open_containers:
                 open_containers.pop()
             continue
-        before = len(nodes)
-        _parse_statement(line, nodes, labels, edges)
-        for declared in nodes[before:]:
-            for container_id in open_containers:
-                members[container_id].append(declared)
+        mentioned = _parse_statement(line, nodes, labels, edges)
+        # A node may be declared before its subgraph and only listed by id
+        # inside it, so every id a statement mentions counts as a member.
+        for container_id in open_containers:
+            for node_id in mentioned:
+                if node_id not in members[container_id]:
+                    members[container_id].append(node_id)
     _expand_container_edges(edges, members)
     endpoints = {n for edge in edges for n in edge}
     nodes = [n for n in nodes if n not in subgraph_ids or n in endpoints]
@@ -395,11 +438,27 @@ _SELFTEST = {
         "    end\n"
         "    B --> T[Done]\n"
     ),
+    "semicolon_in_label": (
+        "flowchart TD\n"
+        '    A["Fetch data; parse"] --> B[Work]\n'
+        "    B --> T[Done]\n"
+    ),
     "container_edges": (
         "flowchart TD\n"
         "    subgraph P[Parallel]\n"
         "        N2A[Left]\n"
         "        N2B[Right]\n"
+        "    end\n"
+        "    N1[Start] --> P\n"
+        "    P --> N3[Join]\n"
+    ),
+    "container_members_by_reference": (
+        "flowchart TD\n"
+        "    N2A[Left]\n"
+        "    N2B[Right]\n"
+        "    subgraph P[Parallel]\n"
+        "        N2A\n"
+        "        N2B\n"
         "    end\n"
         "    N1[Start] --> P\n"
         "    P --> N3[Join]\n"
@@ -490,6 +549,8 @@ def selftest() -> int:
         "subgraph",
         "hyphenated_edge_label",
         "container_edges",
+        "container_members_by_reference",
+        "semicolon_in_label",
         "link_directions",
         "tight_spacing",
         "fan_out",
