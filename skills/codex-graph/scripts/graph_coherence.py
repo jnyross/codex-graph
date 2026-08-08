@@ -35,8 +35,9 @@ _BLOCK_RE = re.compile(
     r"(.*?)(?:\n```|\Z)",
     re.DOTALL,
 )
-# Hyphens are excluded so a link operator is never absorbed into an id.
-_ID_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Mermaid ids may start with a digit; hyphens are excluded so a link operator is
+# never absorbed into an id.
+_ID_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_]*")
 # Every link form, with an optional inline label: `-->`, `---`, `--x`, `==>`,
 # `-.->`, their long forms, and `A -- text --> B` / `A -. text .-> B`. The
 # inline label runs until a full link operator, so hyphenated labels survive.
@@ -66,10 +67,17 @@ _KEYWORDS = {
 
 
 class Graph:
-    def __init__(self, nodes: List[str], labels: Dict[str, str], edges: List[Tuple[str, str]]):
+    def __init__(
+        self,
+        nodes: List[str],
+        labels: Dict[str, str],
+        edges: List[Tuple[str, str]],
+        unparsed: Optional[List[str]] = None,
+    ):
         self.nodes = nodes
         self.labels = labels
         self.edges = edges
+        self.unparsed = unparsed or []
         self.outdeg = {n: 0 for n in nodes}
         self.indeg = {n: 0 for n in nodes}
         self.children: Dict[str, List[str]] = {n: [] for n in nodes}
@@ -181,12 +189,19 @@ def _parse_statement(
     nodes: List[str],
     labels: Dict[str, str],
     edges: List[Tuple[str, str]],
+    unparsed: List[str],
 ) -> List[str]:
     """Parse one statement; return every id it mentions (declared or referenced).
 
-    Chained links and `&` groups are supported.
+    Chained links and `&` groups are supported. Anything the scanner cannot read
+    is recorded in `unparsed` rather than dropped, so the gap stays visible.
     """
     seen: List[str] = []
+
+    def bail(at: int) -> List[str]:
+        if stmt[at:].strip():
+            unparsed.append(stmt.strip())
+        return seen
 
     def declare(node_id: str, label: Optional[str]) -> None:
         # Only a shape declaration defines a node; a bare id is a reference,
@@ -208,14 +223,14 @@ def _parse_statement(
                 index += 1
             match = _ID_RE.match(stmt, index)
             if not match:
-                return seen
+                return bail(index)
             node_id = match.group(0)
             index = match.end()
             label: Optional[str] = None
             if index < length and stmt[index] in _SHAPE_OPENERS:
                 scanned = _scan_shape(stmt, index)
                 if scanned is None:
-                    return seen
+                    return bail(index)
                 label, index = scanned
             declare(node_id, label)
             if node_id not in seen:
@@ -245,13 +260,13 @@ def _parse_statement(
         previous = group
         link = _LINK_RE.match(stmt, index)
         if not link:
-            return seen
+            return bail(index)
         direction = _link_direction(link.group(0))
         index = link.end()
         if index < length and stmt[index] == "|":
             close = stmt.find("|", index + 1)
             if close == -1:
-                return seen
+                return bail(index)
             index = close + 1
     return seen
 
@@ -292,6 +307,7 @@ def parse_flowchart(body: str) -> Graph:
     subgraph_ids: Set[str] = set()
     members: Dict[str, List[str]] = {}
     open_containers: List[str] = []
+    unparsed: List[str] = []
     statements = [
         stmt for raw_line in body.splitlines() for stmt in _split_statements(raw_line)
     ]
@@ -313,7 +329,7 @@ def parse_flowchart(body: str) -> Graph:
             elif head == "end" and open_containers:
                 open_containers.pop()
             continue
-        mentioned = _parse_statement(line, nodes, labels, edges)
+        mentioned = _parse_statement(line, nodes, labels, edges, unparsed)
         # A node may be declared before its subgraph and only listed by id
         # inside it, so every id a statement mentions counts as a member.
         for container_id in open_containers:
@@ -325,14 +341,19 @@ def parse_flowchart(body: str) -> Graph:
     nodes = [n for n in nodes if n not in subgraph_ids or n in endpoints]
     # Mermaid allows a subgraph id as an edge endpoint; then it is a real node.
     nodes.extend(sorted(s for s in subgraph_ids if s in endpoints and s not in nodes))
-    return Graph(nodes, labels, edges)
+    return Graph(nodes, labels, edges, unparsed)
 
 
 def check_graph(g: Graph) -> List[str]:
     """Return coherence violations for one parsed graph (empty = coherent)."""
     violations: List[str] = []
+    # An unreadable statement is reported, never skipped: a silently dropped line
+    # would hide the node it declares and fake undefined endpoints downstream.
+    for stmt in g.unparsed:
+        violations.append(f"unparsed diagram statement: {stmt}")
     if not g.nodes and not g.edges:
-        return ["empty diagram: no nodes parsed"]
+        violations.append("empty diagram: no nodes parsed")
+        return violations
     defined = set(g.nodes)
 
     # 1. Edges must reference only defined nodes.
@@ -536,6 +557,17 @@ _SELFTEST = {
         "flowchart TD\n"
         "    A[Start] --> B[Work] --> T\n"
     ),
+    "numeric_id": (
+        "flowchart TD\n"
+        "    1A[Start] --> B[Work]\n"
+        "    B --> T[Done]\n"
+    ),
+    "unparsed_statement": (
+        "flowchart TD\n"
+        '    A["Start\n'
+        '    continued"] --> B[Work]\n'
+        "    B --> T[Done]\n"
+    ),
     "shapeless_nodes": (
         "flowchart TD\n"
         "    A --> B\n"
@@ -561,6 +593,7 @@ def selftest() -> int:
         "container_edges",
         "container_members_by_reference",
         "semicolon_in_label",
+        "numeric_id",
         "link_directions",
         "tight_spacing",
         "fan_out",
@@ -583,6 +616,7 @@ def selftest() -> int:
         ("undefined_edge", "edge references undefined node"),
         ("chained_undefined", "edge references undefined node"),
         ("shapeless_nodes", "edge references undefined node"),
+        ("unparsed_statement", "unparsed diagram statement"),
     ]:
         problems = check_text(_SELFTEST[name])
         if not any(expect_have in p for p in problems):
@@ -603,7 +637,11 @@ def selftest() -> int:
 def lint_paths(paths: List[str]) -> List[str]:
     problems: List[str] = []
     for path in paths:
-        text = Path(path).read_text(encoding="utf-8")
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except OSError as exc:
+            problems.append(f"{path}: cannot read file: {exc}")
+            continue
         for v in check_text(text):
             problems.append(f"{path}: {v}")
     return problems
