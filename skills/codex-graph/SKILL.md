@@ -118,6 +118,24 @@ Apply these rules:
 14. Keep the graph focused on repeatable work execution. Prerequisite artifact
     creation and post-run scoring are external phases unless explicitly named as
     the repeatable task; represent their stable outputs as graph inputs.
+15. Make the graph complete and reachable: every non-terminal node has an
+    outgoing edge, every terminal has a path into it from a start node, and no
+    node is orphaned or stranded. A graph with a dead end or an unreachable
+    terminal is not executable as designed. Run
+    `python skills/codex-graph/scripts/graph_coherence.py <file.md>` on the file
+    holding the work's Mermaid (or pipe the diagram in on stdin) or mirror its
+    rules by hand before returning.
+16. Many files ≠ parallel. Do not fan out merely because a task touches many
+    files. A tightly-coupled change that must be applied in dependency order
+    (e.g. a repository-wide rename of one symbol) stays an L0/L1 `small change`
+    even if it spans many files. Fan out only genuinely independent,
+    non-overlapping work streams; fanning out tightly-coupled edits creates
+    conflict and rework.
+17. Rationale↔graph coherence: the Rationale section must describe the graph
+    you actually drew — the same task family, baseline tier, and
+    parallel/serialized split as the Mermaid — never a different design than the
+    graph draws. If the prose and the graph disagree, fix the graph so the shape
+    matches your intent; do not paper over a mismatch in prose.
 
 ### Node contracts
 
@@ -434,6 +452,13 @@ Before returning the paired deliverable, verify all of the following:
 - The Mermaid graph is readable, syntactically plausible, and uses unique stable node IDs.
 - Parallel branches are independent; overlapping writes are serialized.
 - The graph has no unbounded cycle and contains at most one repair branch.
+- The graph is complete and reachable: no orphaned or stranded nodes; every
+  non-terminal leads to a terminal and every node is reachable from a start
+  node (mirror `skills/codex-graph/scripts/graph_coherence.py`).
+- Many files ≠ parallel: a tightly-coupled, dependency-ordered change (e.g. a
+  repo-wide rename) is not fanned out just because it touches many files.
+- The Rationale matches the graph actually drawn (same task family, baseline
+  tier, and parallel/serialized split) — no prose/design mismatch.
 - Every executable graph node has a matching contract and JavaScript stage or gate.
 - The script is complete JavaScript, not pseudocode or a request for another model to write it.
 - The script uses raw Code Mode semantics, awaits all work, emits output with `text(...)`, and does not use Node.js or `console`.

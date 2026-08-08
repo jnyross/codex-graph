@@ -44,8 +44,20 @@ If your Codex version does not support plugins, clone the repository and copy
 python3 skills/codex-graph/scripts/validate_skill.py
 ```
 
-On Windows, run the validator and task-collection regression suite from
-Codex Desktop's terminal:
+The skill bundle also ships a Mermaid graph-coherence linter
+(`skills/codex-graph/scripts/graph_coherence.py`) that checks generated or
+reference diagrams for orphaned, stranded, or unreachable nodes. Pass the files
+to lint, or pipe a diagram in on stdin. It exits 1 on an incoherent diagram and
+2 when none of the given files contains a diagram, so a mistyped path is never
+reported as a pass:
+
+```bash
+python3 skills/codex-graph/scripts/graph_coherence.py skills/codex-graph/references/topology-library.md
+python3 skills/codex-graph/scripts/graph_coherence.py < diagram.mmd
+```
+
+On Windows, run the validator, graph-coherence linter, and task-collection
+regression suite from Codex Desktop's terminal:
 
 ```powershell
 .\scripts\run_windows_regressions.ps1
