@@ -26,19 +26,28 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+# Inside a ```mermaid fence the direction is optional (Mermaid defaults to TB);
+# unfenced, a direction is required so prose mentioning the word is not parsed.
 _BLOCK_RE = re.compile(
-    r"(?:```mermaid\s*\n)?(?:flowchart|graph)\s+(TD|TB|BT|LR|RL)\s*\n(.*?)(?:\n```|\Z)",
+    r"(?:```mermaid[ \t]*\n[ \t]*(?:flowchart|graph)[ \t]*(TD|TB|BT|LR|RL)?[ \t]*;?[ \t]*\n"
+    r"|(?:flowchart|graph)[ \t]+(TD|TB|BT|LR|RL)[ \t]*;?[ \t]*\n)"
+    r"(.*?)(?:\n```|\Z)",
     re.DOTALL,
 )
 # Hyphens are excluded so a link operator is never absorbed into an id.
 _ID_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# Link with inline text: `A -- text --> B`, `A == text ==> B`, `A -. text .-> B`.
-_LINK_TEXT_RE = re.compile(
-    r"\s*(?:--|==)[^|>=\n-][^|>=\n]*?(?:-+|=+)[>xo]?\s*"
-    r"|\s*-\.[^.\n]*\.-+[>xo]?\s*"
+# Every link form, with an optional inline label: `-->`, `---`, `--x`, `==>`,
+# `-.->`, their long forms, and `A -- text --> B` / `A -. text .-> B`. The
+# inline label runs until a full link operator, so hyphenated labels survive.
+_LINK_RE = re.compile(
+    r"""\s*<?
+    (?:
+        -{2,}(?:[^|>\n]*?-{2,})?[>xo]?
+      | ={2,}(?:[^|>\n]*?={2,})?[>xo]?
+      | -\.(?:[^|>\n]*?\.)?-+[>xo]?
+    )\s*""",
+    re.VERBOSE,
 )
-# Bare link: `-->`, `---`, `--x`, `==>`, `-.->`, and their long forms.
-_LINK_RE = re.compile(r"\s*<?(?:-{2,}|={2,}|-\.+-)[>xo]?\s*")
 _SHAPE_OPENERS = "[({>"
 # Statement keywords that never declare an executable node.
 _KEYWORDS = {
@@ -165,7 +174,7 @@ def _parse_statement(
                 if a != b:
                     edges.append((a, b))
         previous = group
-        link = _LINK_TEXT_RE.match(stmt, index) or _LINK_RE.match(stmt, index)
+        link = _LINK_RE.match(stmt, index)
         if not link:
             return
         index = link.end()
@@ -263,7 +272,10 @@ def check_graph(g: Graph) -> List[str]:
 
 def extract_blocks(text: str) -> List[Tuple[str, str]]:
     """Return list of (mermaid_direction, diagram_body) for each flowchart block."""
-    return [(d, b) for d, b in _BLOCK_RE.findall(text)]
+    return [
+        (fenced_dir or unfenced_dir or "TB", body)
+        for fenced_dir, unfenced_dir, body in _BLOCK_RE.findall(text)
+    ]
 
 
 def check_text(text: str) -> List[str]:
@@ -316,6 +328,11 @@ _SELFTEST = {
         "    end\n"
         "    B --> T[Done]\n"
     ),
+    "hyphenated_edge_label": (
+        "flowchart TD\n"
+        "    A[Start] -- repair-required --> B[Repair]\n"
+        "    B --> T[Done]\n"
+    ),
     "tight_spacing": (
         "graph LR\n"
         "    A[Start]-->|go|B[Work];B-->T[Done];\n"
@@ -335,6 +352,18 @@ _SELFTEST = {
         "flowchart TB\n"
         "    A[Start] --> B[Work]\n"
         "    B --> T1[Return evidence]\n"
+        "    X[Orphaned node]\n"
+    ),
+    "orphan_no_direction": (
+        "```mermaid\n"
+        "flowchart\n"
+        "    A[Start] --> B[Work]\n"
+        "    X[Orphaned node]\n"
+        "```\n"
+    ),
+    "orphan_semicolon_header": (
+        "flowchart TD;\n"
+        "    A[Start] --> B[Work]\n"
         "    X[Orphaned node]\n"
     ),
     "dead_end": (
@@ -372,6 +401,7 @@ def selftest() -> int:
         "link_variants",
         "quoted_label",
         "subgraph",
+        "hyphenated_edge_label",
         "tight_spacing",
         "fan_out",
     ]:
@@ -385,6 +415,8 @@ def selftest() -> int:
     for name, expect_have in [
         ("orphan", "orphaned nodes"),
         ("orphan_other_direction", "orphaned nodes"),
+        ("orphan_no_direction", "orphaned nodes"),
+        ("orphan_semicolon_header", "orphaned nodes"),
         ("dead_end", "cannot reach any terminal"),
         ("unreachable", "unreachable from any start"),
         ("undefined_edge", "edge references undefined node"),
