@@ -26,13 +26,21 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-# Inside a ```mermaid fence the direction is optional (Mermaid defaults to TB);
-# unfenced, a direction is required and the header must start its own line, so
-# prose mentioning the word is not parsed as a diagram.
-_BLOCK_RE = re.compile(
-    r"(?:```mermaid[ \t]*\n[ \t]*(?:flowchart|graph)[ \t]*(TD|TB|BT|LR|RL)?[ \t]*;?[ \t]*\n"
-    r"|(?:^|\n)[ \t]*(?:flowchart|graph)[ \t]+(TD|TB|BT|LR|RL)[ \t]*;?[ \t]*\n)"
+# Inside a ```mermaid fence the direction is optional (Mermaid defaults to TB)
+# and the fence delimits the body.
+_FENCED_RE = re.compile(
+    r"```mermaid[ \t]*\n[ \t]*(?:flowchart|graph)[ \t]*(TD|TB|BT|LR|RL)?[ \t]*;?[ \t]*\n"
     r"(.*?)(?:\n```|\Z)",
+    re.DOTALL,
+)
+# Unfenced, a direction is required and the header must start its own line, so
+# prose mentioning the word is not parsed. The body ends at the first blank line,
+# a fence, or the next header, so surrounding prose is not absorbed.
+_UNFENCED_RE = re.compile(
+    r"(?:^|\n)[ \t]*(?:flowchart|graph)[ \t]+(TD|TB|BT|LR|RL)[ \t]*;?[ \t]*\n"
+    r"(.*?)"
+    r"(?=\n[ \t]*\n|\n[ \t]*```|"
+    r"\n[ \t]*(?:flowchart|graph)[ \t]+(?:TD|TB|BT|LR|RL)[ \t]*;?[ \t]*\n|\Z)",
     re.DOTALL,
 )
 # Mermaid ids may start with a digit; hyphens are excluded so a link operator is
@@ -42,7 +50,7 @@ _ID_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_]*")
 # `-.->`, their long forms, and `A -- text --> B` / `A -. text .-> B`. The
 # inline label runs until a full link operator, so hyphenated labels survive.
 _LINK_RE = re.compile(
-    r"""\s*<?
+    r"""\s*(?:[ox](?=[-=.])|<)?\s*
     (?:
         -{2,}(?:[^|>\n\[\](){}&]*?-{2,})?[>xo]?
       | ={2,}(?:[^|>\n\[\](){}&]*?={2,})?[>xo]?
@@ -134,12 +142,13 @@ def _scan_shape(text: str, start: int) -> Optional[Tuple[str, int]]:
 def _link_direction(link: str) -> str:
     """Classify a link operator: forward, reverse, or both (bidirectional).
 
-    `A <-- B` flows right-to-left and `A <--> B` flows both ways. A link with no
-    arrowhead (`A --- B`) is read in the direction it is drawn, since treating it
-    as bidirectional would make every diagram that opens with one rootless.
+    `A <-- B` flows right-to-left; `A <--> B`, `A o--o B` and `A x--x B` flow both
+    ways. A link with no arrowhead (`A --- B`) is read in the direction it is
+    drawn, since treating it as bidirectional would make every diagram that opens
+    with one rootless.
     """
     operator = link.strip()
-    head = operator.startswith("<")
+    head = operator.startswith(("<", "o", "x"))
     tail = operator.endswith((">", "x", "o"))
     if head:
         return "both" if tail else "reverse"
@@ -414,10 +423,17 @@ def check_graph(g: Graph) -> List[str]:
 
 def extract_blocks(text: str) -> List[Tuple[str, str]]:
     """Return list of (mermaid_direction, diagram_body) for each flowchart block."""
-    return [
-        (fenced_dir or unfenced_dir or "TB", body)
-        for fenced_dir, unfenced_dir, body in _BLOCK_RE.findall(text)
-    ]
+    found: List[Tuple[int, str, str]] = []
+    fenced_spans: List[Tuple[int, int]] = []
+    for match in _FENCED_RE.finditer(text):
+        fenced_spans.append(match.span())
+        found.append((match.start(), match.group(1) or "TB", match.group(2)))
+    for match in _UNFENCED_RE.finditer(text):
+        # A header inside a fence is already covered by the fenced match.
+        if any(start <= match.start() < end for start, end in fenced_spans):
+            continue
+        found.append((match.start(), match.group(1), match.group(2)))
+    return [(direction, body) for _, direction, body in sorted(found)]
 
 
 def check_text(text: str) -> List[str]:
@@ -567,6 +583,27 @@ _SELFTEST = {
         "flowchart TD\n"
         "    A[Start] --> B[Work] --> T\n"
     ),
+    "circle_cross_links": (
+        "flowchart LR\n"
+        "    A[Start] --> B[Work]\n"
+        "    B o--o C[Peer]\n"
+        "    B x--x D[Other]\n"
+        "    B --> T[Done]\n"
+    ),
+    "unfenced_then_prose": (
+        "flowchart TD\n"
+        "    A[Start] --> B[Work]\n"
+        "    B --> T[Done]\n"
+        "\n"
+        "Some prose after the diagram.\n"
+    ),
+    "two_unfenced_diagrams": (
+        "flowchart TD\n"
+        "    A[Start] --> T[Done]\n"
+        "\n"
+        "graph LR\n"
+        "    C[Begin] --> D[End]\n"
+    ),
     "pipe_label_semicolon": (
         "flowchart TD\n"
         "    A[Start] -->|pass; fail| B[Work]\n"
@@ -614,6 +651,9 @@ def selftest() -> int:
         "container_members_by_reference",
         "semicolon_in_label",
         "pipe_label_semicolon",
+        "circle_cross_links",
+        "unfenced_then_prose",
+        "two_unfenced_diagrams",
         "class_shorthand",
         "numeric_id",
         "link_directions",
