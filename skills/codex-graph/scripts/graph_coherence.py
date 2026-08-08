@@ -34,12 +34,12 @@ _FENCED_RE = re.compile(
     re.DOTALL,
 )
 # Unfenced, a direction is required and the header must start its own line, so
-# prose mentioning the word is not parsed. The body ends at the first blank line,
-# a fence, or the next header, so surrounding prose is not absorbed.
+# prose mentioning the word is not parsed. The body ends at a fence or the next
+# header; `_trim_unfenced_body` then drops trailing prose.
 _UNFENCED_RE = re.compile(
     r"(?:^|\n)[ \t]*(?:flowchart|graph)[ \t]+(TD|TB|BT|LR|RL)[ \t]*;?[ \t]*\n"
     r"(.*?)"
-    r"(?=\n[ \t]*\n|\n[ \t]*```|"
+    r"(?=\n[ \t]*```|"
     r"\n[ \t]*(?:flowchart|graph)[ \t]+(?:TD|TB|BT|LR|RL)[ \t]*;?[ \t]*\n|\Z)",
     re.DOTALL,
 )
@@ -47,14 +47,20 @@ _UNFENCED_RE = re.compile(
 # never absorbed into an id.
 _ID_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_]*")
 # Every link form, with an optional inline label: `-->`, `---`, `--x`, `==>`,
-# `-.->`, their long forms, and `A -- text --> B` / `A -. text .-> B`. The
-# inline label runs until a full link operator, so hyphenated labels survive.
+# `-.->`, their long forms, and `A -- text --> B` / `A -. text .-> B`. An inline
+# label opens with exactly `--` / `==` (a longer run is an unlabelled link) and
+# its text may not contain a node shape (`B[b]`), so `A --- B[b] --> C` stays a
+# chain instead of collapsing into one labelled link.
+_LABEL = r"(?:(?![A-Za-z0-9_]+[\[({])[^|>\n])*?"
 _LINK_RE = re.compile(
     r"""\s*(?:[ox](?=[-=.])|<)?\s*
     (?:
-        -{2,}(?:[^|>\n\[\](){}&]*?-{2,})?[>xo]?
-      | ={2,}(?:[^|>\n\[\](){}&]*?={2,})?[>xo]?
-      | -\.(?:[^|>\n\[\](){}&]*?\.)?-+[>xo]?
+        --(?!-)""" + _LABEL + r"""-{2,}[>xo]?
+      | ==(?!=)""" + _LABEL + r"""={2,}[>xo]?
+      | -\.""" + _LABEL + r"""\.-+[>xo]?
+      | -{2,}[>xo]?
+      | ={2,}[>xo]?
+      | -\.-+[>xo]?
     )\s*""",
     re.VERBOSE,
 )
@@ -421,6 +427,23 @@ def check_graph(g: Graph) -> List[str]:
     return violations
 
 
+def _trim_unfenced_body(body: str) -> str:
+    """Drop trailing prose from an unfenced diagram body.
+
+    A blank line inside a diagram is only a grouping device, so the body runs on
+    while the following content is still indented like a statement; a blank line
+    followed by flush-left text is where the diagram ends and prose begins.
+    """
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip():
+            continue
+        following = next((later for later in lines[index + 1 :] if later.strip()), None)
+        if following is None or not following[:1].isspace():
+            return "\n".join(lines[:index])
+    return body
+
+
 def extract_blocks(text: str) -> List[Tuple[str, str]]:
     """Return list of (mermaid_direction, diagram_body) for each flowchart block."""
     found: List[Tuple[int, str, str]] = []
@@ -432,12 +455,15 @@ def extract_blocks(text: str) -> List[Tuple[str, str]]:
         # A header inside a fence is already covered by the fenced match.
         if any(start <= match.start() < end for start, end in fenced_spans):
             continue
-        found.append((match.start(), match.group(1), match.group(2)))
+        found.append((match.start(), match.group(1), _trim_unfenced_body(match.group(2))))
     return [(direction, body) for _, direction, body in sorted(found)]
 
 
 def check_text(text: str) -> List[str]:
     """Lint every flowchart block in a document. Returns aggregated violations."""
+    # Windows checkouts hand us CRLF; without normalising, no diagram would match
+    # and every document would pass vacuously.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     problems: List[str] = []
     blocks = extract_blocks(text)
     # Absence of a diagram is not an incoherence (some docs only reference the
@@ -579,9 +605,33 @@ _SELFTEST = {
         "flowchart TD\n"
         "    A[Start] --> B\n"
     ),
+    "crlf_orphan": (
+        "```mermaid\r\n"
+        "flowchart TD\r\n"
+        "    A[Start] --> T[Done]\r\n"
+        "    X[Orphan]\r\n"
+        "```\r\n"
+    ),
+    "unfenced_blank_line_orphan": (
+        "flowchart TD\n"
+        "    A[Start] --> T[Done]\n"
+        "\n"
+        "    X[Orphan]\n"
+    ),
     "chained_undefined": (
         "flowchart TD\n"
         "    A[Start] --> B[Work] --> T\n"
+    ),
+    "inline_label_specials": (
+        "flowchart TD\n"
+        "    A[Start] -- fetch & parse --> B[Work]\n"
+        "    B -- ok (fast) --> T[Done]\n"
+    ),
+    "unfenced_blank_line_groups": (
+        "flowchart TD\n"
+        "    A[Start] --> B[Work]\n"
+        "\n"
+        "    B --> T[Done]\n"
     ),
     "circle_cross_links": (
         "flowchart LR\n"
@@ -652,6 +702,8 @@ def selftest() -> int:
         "semicolon_in_label",
         "pipe_label_semicolon",
         "circle_cross_links",
+        "inline_label_specials",
+        "unfenced_blank_line_groups",
         "unfenced_then_prose",
         "two_unfenced_diagrams",
         "class_shorthand",
@@ -679,6 +731,8 @@ def selftest() -> int:
         ("chained_undefined", "edge references undefined node"),
         ("shapeless_nodes", "edge references undefined node"),
         ("unparsed_statement", "unparsed diagram statement"),
+        ("crlf_orphan", "orphaned nodes with no edges"),
+        ("unfenced_blank_line_orphan", "orphaned nodes with no edges"),
     ]:
         problems = check_text(_SELFTEST[name])
         if not any(expect_have in p for p in problems):
