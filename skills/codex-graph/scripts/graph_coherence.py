@@ -27,10 +27,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 # Inside a ```mermaid fence the direction is optional (Mermaid defaults to TB);
-# unfenced, a direction is required so prose mentioning the word is not parsed.
+# unfenced, a direction is required and the header must start its own line, so
+# prose mentioning the word is not parsed as a diagram.
 _BLOCK_RE = re.compile(
     r"(?:```mermaid[ \t]*\n[ \t]*(?:flowchart|graph)[ \t]*(TD|TB|BT|LR|RL)?[ \t]*;?[ \t]*\n"
-    r"|(?:flowchart|graph)[ \t]+(TD|TB|BT|LR|RL)[ \t]*;?[ \t]*\n)"
+    r"|(?:^|\n)[ \t]*(?:flowchart|graph)[ \t]+(TD|TB|BT|LR|RL)[ \t]*;?[ \t]*\n)"
     r"(.*?)(?:\n```|\Z)",
     re.DOTALL,
 )
@@ -330,7 +331,7 @@ def parse_flowchart(body: str) -> Graph:
 def check_graph(g: Graph) -> List[str]:
     """Return coherence violations for one parsed graph (empty = coherent)."""
     violations: List[str] = []
-    if not g.nodes:
+    if not g.nodes and not g.edges:
         return ["empty diagram: no nodes parsed"]
     defined = set(g.nodes)
 
@@ -535,7 +536,16 @@ _SELFTEST = {
         "flowchart TD\n"
         "    A[Start] --> B[Work] --> T\n"
     ),
+    "shapeless_nodes": (
+        "flowchart TD\n"
+        "    A --> B\n"
+        "    B --> C\n"
+    ),
 }
+_PROSE_NOT_A_DIAGRAM = (
+    "Some prose describing a graph flowchart TD\n"
+    "Then more prose here about nodes.\n"
+)
 
 
 def selftest() -> int:
@@ -572,6 +582,7 @@ def selftest() -> int:
         ("unreachable", "unreachable from any start"),
         ("undefined_edge", "edge references undefined node"),
         ("chained_undefined", "edge references undefined node"),
+        ("shapeless_nodes", "edge references undefined node"),
     ]:
         problems = check_text(_SELFTEST[name])
         if not any(expect_have in p for p in problems):
@@ -579,6 +590,12 @@ def selftest() -> int:
             fails += 1
         else:
             print(f"  [ok] {name} diagram detected")
+
+    if extract_blocks(_PROSE_NOT_A_DIAGRAM) or check_text(_PROSE_NOT_A_DIAGRAM):
+        print("  [FAIL] prose mentioning a header keyword should not parse as a diagram")
+        fails += 1
+    else:
+        print("  [ok] prose mentioning a header keyword is not a diagram")
 
     return fails
 
