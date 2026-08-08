@@ -221,11 +221,23 @@ def _parse_statement(
     is recorded in `unparsed` rather than dropped, so the gap stays visible.
     """
     seen: List[str] = []
+    node_count = len(nodes)
+    edge_count = len(edges)
+    label_snapshot = dict(labels)
 
     def bail(at: int) -> List[str]:
-        if stmt[at:].strip():
-            unparsed.append(stmt.strip())
-        return seen
+        if not stmt[at:].strip():
+            # The statement simply ended (`A[Start]` on its own line).
+            return seen
+        unparsed.append(stmt.strip())
+        # Everything scanned so far is half a statement; keeping it would invent
+        # nodes out of label words and cascade fake undefined/dead-end reports on
+        # top of the one real complaint.
+        del nodes[node_count:]
+        del edges[edge_count:]
+        labels.clear()
+        labels.update(label_snapshot)
+        return []
 
     def declare(node_id: str, label: Optional[str]) -> None:
         # Only a shape declaration defines a node; a bare id is a reference,
@@ -381,7 +393,9 @@ def check_graph(g: Graph) -> List[str]:
     for stmt in g.unparsed:
         violations.append(f"unparsed diagram statement: {stmt}")
     if not g.nodes and not g.edges:
-        violations.append("empty diagram: no nodes parsed")
+        # With unreadable statements the emptiness is already explained by them.
+        if not g.unparsed:
+            violations.append("empty diagram: no nodes parsed")
         return violations
     defined = set(g.nodes)
 
@@ -813,6 +827,13 @@ def selftest() -> int:
         else:
             print("  [ok] a file with no diagram is not reported as a pass")
 
+    single_unparsed = check_text("flowchart TD\n    A[Start] -- score > 5 --> T[Done]\n")
+    if len(single_unparsed) != 1 or "unparsed diagram statement" not in single_unparsed[0]:
+        print("  [FAIL] one unreadable statement should yield one violation, got:", single_unparsed)
+        fails += 1
+    else:
+        print("  [ok] an unreadable statement does not cascade extra violations")
+
     crlf_coherent = "flowchart TD\r\n    A[Start] --> T[Done]\r\n"
     if not extract_blocks(crlf_coherent) or check_text(crlf_coherent):
         print("  [FAIL] a coherent CRLF diagram should be found and pass")
@@ -871,11 +892,12 @@ def main(argv: List[str]) -> int:
         problems, without_diagram = lint_paths(paths)
         for path in without_diagram:
             print(f"NOTE: {path}: no flowchart diagram found", file=sys.stderr)
-        status = _report(problems)
-        # Nothing was checked anywhere: same "nothing to check" contract as stdin.
-        if status == 0 and len(without_diagram) == len(paths):
+        # Nothing was checked anywhere: same "nothing to check" contract as stdin,
+        # and no PASS line, which would otherwise contradict the exit code.
+        if not problems and len(without_diagram) == len(paths):
+            print("ERROR: no flowchart diagram found in any given file", file=sys.stderr)
             return 2
-        return status
+        return _report(problems)
     if not sys.stdin.isatty():
         text = sys.stdin.read()
         if text.strip():
