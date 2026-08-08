@@ -51,6 +51,8 @@ _LINK_RE = re.compile(
     re.VERBOSE,
 )
 _SHAPE_OPENERS = "[({>"
+# Mermaid's inline class shorthand: `A[Start]:::hot --> B`.
+_CLASS_RE = re.compile(r":::[A-Za-z0-9_]+")
 # Statement keywords that never declare an executable node.
 _KEYWORDS = {
     "subgraph",
@@ -151,13 +153,14 @@ def _clean_label(raw: str) -> str:
 def _split_statements(line: str) -> List[str]:
     """Split a line into statements, ignoring `;` and `%%` inside labels.
 
-    Mermaid treats `;` as a separator and `%%` as a comment only outside node
-    text, so a label like `A["Fetch data; parse"]` must stay in one piece.
+    Mermaid treats `;` as a separator and `%%` as a comment only outside label
+    text, so `A["Fetch data; parse"]` and `A -->|pass; fail| B` stay in one piece.
     """
     statements: List[str] = []
     current: List[str] = []
     depth = 0
     quoted = False
+    piped = False
     index = 0
     while index < len(line):
         char = line[index]
@@ -170,7 +173,9 @@ def _split_statements(line: str) -> List[str]:
             depth += 1
         elif char in "])}":
             depth = max(0, depth - 1)
-        elif depth == 0:
+        elif char == "|" and depth == 0:
+            piped = not piped
+        elif depth == 0 and not piped:
             if line.startswith("%%", index):
                 break
             if char == ";":
@@ -232,6 +237,11 @@ def _parse_statement(
                 if scanned is None:
                     return bail(index)
                 label, index = scanned
+            while True:
+                node_class = _CLASS_RE.match(stmt, index)
+                if not node_class:
+                    break
+                index = node_class.end()
             declare(node_id, label)
             if node_id not in seen:
                 seen.append(node_id)
@@ -557,6 +567,16 @@ _SELFTEST = {
         "flowchart TD\n"
         "    A[Start] --> B[Work] --> T\n"
     ),
+    "pipe_label_semicolon": (
+        "flowchart TD\n"
+        "    A[Start] -->|pass; fail| B[Work]\n"
+        "    B --> T[Done]\n"
+    ),
+    "class_shorthand": (
+        "flowchart TD\n"
+        "    A[Start]:::hot --> B[Work]\n"
+        "    B:::cool --> T[Done]\n"
+    ),
     "numeric_id": (
         "flowchart TD\n"
         "    1A[Start] --> B[Work]\n"
@@ -593,6 +613,8 @@ def selftest() -> int:
         "container_edges",
         "container_members_by_reference",
         "semicolon_in_label",
+        "pipe_label_semicolon",
+        "class_shorthand",
         "numeric_id",
         "link_directions",
         "tight_spacing",
