@@ -47,10 +47,12 @@ python3 skills/codex-graph/scripts/validate_skill.py
 The skill bundle also ships a Mermaid graph-coherence linter
 (`skills/codex-graph/scripts/graph_coherence.py`) that checks generated or
 reference diagrams for orphaned, stranded, or unreachable nodes. Pass the files
-to lint, or pipe a diagram in on stdin:
+to lint, or pipe a diagram in on stdin. It exits 1 on an incoherent diagram and
+2 when none of the given files contains a diagram, so a mistyped path is never
+reported as a pass:
 
 ```bash
-python3 skills/codex-graph/scripts/graph_coherence.py skills/codex-graph/SKILL.md
+python3 skills/codex-graph/scripts/graph_coherence.py skills/codex-graph/references/topology-library.md
 python3 skills/codex-graph/scripts/graph_coherence.py < diagram.mmd
 ```
 

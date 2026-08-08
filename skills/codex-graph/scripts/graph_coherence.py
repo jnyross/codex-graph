@@ -12,7 +12,7 @@ model.
 Exit codes:
   0  all checked diagrams are coherent (or --selfcheck passed)
   1  any diagram has an incoherence (or --selfcheck found a bug)
-  2  nothing to check (no paths and no piped diagram on stdin)
+  2  nothing to check (no input, or no given file contains a diagram)
 
 Usage:
   python3 graph_coherence.py <file.md ...>     # lint every Mermaid diagram
@@ -21,8 +21,11 @@ Usage:
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -729,6 +732,13 @@ _PROSE_NOT_A_DIAGRAM = (
 )
 
 
+def _quiet_main(argv: List[str]) -> int:
+    """Run the CLI for its exit code without mixing its output into selfcheck."""
+    sink = io.StringIO()
+    with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        return main(argv)
+
+
 def selftest() -> int:
     fails = 0
 
@@ -786,6 +796,23 @@ def selftest() -> int:
         else:
             print(f"  [ok] {name} diagram detected")
 
+    with tempfile.TemporaryDirectory() as tmp:
+        blank = Path(tmp) / "no-diagram.md"
+        blank.write_text("Just prose, no diagram here.\n", encoding="utf-8")
+        diagram = Path(tmp) / "diagram.md"
+        diagram.write_text(_SELFTEST["chained"], encoding="utf-8")
+        if lint_paths([str(blank)]) != ([], [str(blank)]) or lint_paths([str(diagram)]) != (
+            [],
+            [],
+        ):
+            print("  [FAIL] a file with no diagram should be reported as unchecked")
+            fails += 1
+        elif _quiet_main([str(blank)]) != 2 or _quiet_main([str(diagram)]) != 0:
+            print("  [FAIL] linting only diagram-free files should exit 2, not pass")
+            fails += 1
+        else:
+            print("  [ok] a file with no diagram is not reported as a pass")
+
     crlf_coherent = "flowchart TD\r\n    A[Start] --> T[Done]\r\n"
     if not extract_blocks(crlf_coherent) or check_text(crlf_coherent):
         print("  [FAIL] a coherent CRLF diagram should be found and pass")
@@ -802,17 +829,26 @@ def selftest() -> int:
     return fails
 
 
-def lint_paths(paths: List[str]) -> List[str]:
+def lint_paths(paths: List[str]) -> Tuple[List[str], List[str]]:
+    """Lint each path. Returns (violations, paths that held no diagram).
+
+    A path with no diagram is reported separately rather than counted as a pass:
+    a silent "all diagrams are coherent" would tell the caller its graph was
+    verified when nothing was ever read.
+    """
     problems: List[str] = []
+    without_diagram: List[str] = []
     for path in paths:
         try:
             text = Path(path).read_text(encoding="utf-8")
         except OSError as exc:
             problems.append(f"{path}: cannot read file: {exc}")
             continue
+        if not extract_blocks(text):
+            without_diagram.append(path)
         for v in check_text(text):
             problems.append(f"{path}: {v}")
-    return problems
+    return problems, without_diagram
 
 
 def _report(problems: List[str]) -> int:
@@ -832,7 +868,14 @@ def main(argv: List[str]) -> int:
 
     paths = [p for p in argv if not p.startswith("--")]
     if paths:
-        return _report(lint_paths(paths))
+        problems, without_diagram = lint_paths(paths)
+        for path in without_diagram:
+            print(f"NOTE: {path}: no flowchart diagram found", file=sys.stderr)
+        status = _report(problems)
+        # Nothing was checked anywhere: same "nothing to check" contract as stdin.
+        if status == 0 and len(without_diagram) == len(paths):
+            return 2
+        return status
     if not sys.stdin.isatty():
         text = sys.stdin.read()
         if text.strip():
