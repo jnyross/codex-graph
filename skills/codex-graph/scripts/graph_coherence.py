@@ -27,10 +27,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 # Inside a ```mermaid fence the direction is optional (Mermaid defaults to TB)
-# and the fence delimits the body.
+# and the fence delimits the body. Either fence may be indented, as it is when the
+# diagram sits inside a list item.
 _FENCED_RE = re.compile(
     r"```mermaid[ \t]*\n[ \t]*(?:flowchart|graph)[ \t]*(TD|TB|BT|LR|RL)?[ \t]*;?[ \t]*\n"
-    r"(.*?)(?:\n```|\Z)",
+    r"(.*?)(?:\n[ \t]*```|\Z)",
     re.DOTALL,
 )
 # Unfenced, a direction is required and the header must start its own line, so
@@ -664,6 +665,16 @@ _SELFTEST = {
         "\n"
         "B --> T[Done]\n"
     ),
+    "indented_fence": (
+        "- A step with a diagram:\n"
+        "\n"
+        "  ```mermaid\n"
+        "  flowchart TD\n"
+        "      A[Start] --> T[Done]\n"
+        "  ```\n"
+        "\n"
+        "Prose after the list item.\n"
+    ),
     "circle_cross_links": (
         "flowchart LR\n"
         "    A[Start] --> B[Work]\n"
@@ -736,6 +747,7 @@ def selftest() -> int:
         "inline_label_specials",
         "unfenced_blank_line_groups",
         "unfenced_flush_left_groups",
+        "indented_fence",
         "unfenced_then_prose",
         "two_unfenced_diagrams",
         "class_shorthand",
