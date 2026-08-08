@@ -457,8 +457,15 @@ def _trim_unfenced_body(body: str) -> str:
     return body
 
 
+def _normalize_newlines(text: str) -> str:
+    """Fold CRLF / CR to LF: the block patterns anchor on `\n`, and a Windows
+    checkout would otherwise yield no diagrams at all."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def extract_blocks(text: str) -> List[Tuple[str, str]]:
     """Return list of (mermaid_direction, diagram_body) for each flowchart block."""
+    text = _normalize_newlines(text)
     found: List[Tuple[int, str, str]] = []
     fenced_spans: List[Tuple[int, int]] = []
     for match in _FENCED_RE.finditer(text):
@@ -474,9 +481,7 @@ def extract_blocks(text: str) -> List[Tuple[str, str]]:
 
 def check_text(text: str) -> List[str]:
     """Lint every flowchart block in a document. Returns aggregated violations."""
-    # Windows checkouts hand us CRLF; without normalising, no diagram would match
-    # and every document would pass vacuously.
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = _normalize_newlines(text)
     problems: List[str] = []
     blocks = extract_blocks(text)
     # Absence of a diagram is not an incoherence (some docs only reference the
@@ -768,6 +773,13 @@ def selftest() -> int:
             fails += 1
         else:
             print(f"  [ok] {name} diagram detected")
+
+    crlf_coherent = "flowchart TD\r\n    A[Start] --> T[Done]\r\n"
+    if not extract_blocks(crlf_coherent) or check_text(crlf_coherent):
+        print("  [FAIL] a coherent CRLF diagram should be found and pass")
+        fails += 1
+    else:
+        print("  [ok] CRLF diagram is found by extract_blocks")
 
     if extract_blocks(_PROSE_NOT_A_DIAGRAM) or check_text(_PROSE_NOT_A_DIAGRAM):
         print("  [FAIL] prose mentioning a header keyword should not parse as a diagram")
