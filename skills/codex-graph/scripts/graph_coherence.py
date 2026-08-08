@@ -185,14 +185,20 @@ def _parse_statement(
                 index = probe + 1
                 continue
             break
+        # A written self-link (`V1 -->|retry| V1`) is a real unbounded loop and
+        # must survive; only duplicates from an `&` expansion are dropped.
+        emitted: Set[Tuple[str, str]] = set()
         for a in previous:
             for b in group:
-                if a == b:
-                    continue
+                pairs = []
                 if direction in ("forward", "both"):
-                    edges.append((a, b))
+                    pairs.append((a, b))
                 if direction in ("reverse", "both"):
-                    edges.append((b, a))
+                    pairs.append((b, a))
+                for pair in pairs:
+                    if pair not in emitted:
+                        emitted.add(pair)
+                        edges.append(pair)
         previous = group
         link = _LINK_RE.match(stmt, index)
         if not link:
@@ -206,11 +212,42 @@ def _parse_statement(
             index = close + 1
 
 
+def _expand_container_edges(
+    edges: List[Tuple[str, str]],
+    members: Dict[str, List[str]],
+) -> None:
+    """Wire edges on a subgraph id through to the members it stands for.
+
+    Mermaid allows `N1 --> P` / `P --> N3` where `P` is a container: the link
+    applies to the whole group. Without this, members wired only via their
+    container look orphaned.
+    """
+    for container, group in members.items():
+        inside = set(group)
+        if not inside:
+            continue
+        internal = [(a, b) for a, b in edges if a in inside and b in inside]
+        entries = [m for m in group if not any(b == m for _, b in internal)]
+        exits = [m for m in group if not any(a == m for a, _ in internal)]
+        incoming = [a for a, b in list(edges) if b == container and a not in inside]
+        outgoing = [b for a, b in list(edges) if a == container and b not in inside]
+        for source in incoming:
+            for entry in entries:
+                if (source, entry) not in edges:
+                    edges.append((source, entry))
+        for target in outgoing:
+            for exit_node in exits:
+                if (exit_node, target) not in edges:
+                    edges.append((exit_node, target))
+
+
 def parse_flowchart(body: str) -> Graph:
     nodes: List[str] = []
     labels: Dict[str, str] = {}
     edges: List[Tuple[str, str]] = []
     subgraph_ids: Set[str] = set()
+    members: Dict[str, List[str]] = {}
+    open_containers: List[str] = []
     statements = [
         stmt
         for raw_line in body.splitlines()
@@ -227,10 +264,19 @@ def parse_flowchart(body: str) -> Graph:
             if head == "subgraph":
                 remainder = line[len("subgraph") :].strip()
                 container = _ID_RE.match(remainder)
-                if container:
-                    subgraph_ids.add(container.group(0))
+                container_id = container.group(0) if container else f"__anon{len(members)}"
+                subgraph_ids.add(container_id)
+                members.setdefault(container_id, [])
+                open_containers.append(container_id)
+            elif head == "end" and open_containers:
+                open_containers.pop()
             continue
+        before = len(nodes)
         _parse_statement(line, nodes, labels, edges)
+        for declared in nodes[before:]:
+            for container_id in open_containers:
+                members[container_id].append(declared)
+    _expand_container_edges(edges, members)
     endpoints = {n for edge in edges for n in edge}
     nodes = [n for n in nodes if n not in subgraph_ids or n in endpoints]
     # Mermaid allows a subgraph id as an edge endpoint; then it is a real node.
@@ -349,6 +395,15 @@ _SELFTEST = {
         "    end\n"
         "    B --> T[Done]\n"
     ),
+    "container_edges": (
+        "flowchart TD\n"
+        "    subgraph P[Parallel]\n"
+        "        N2A[Left]\n"
+        "        N2B[Right]\n"
+        "    end\n"
+        "    N1[Start] --> P\n"
+        "    P --> N3[Join]\n"
+    ),
     "link_directions": (
         "flowchart LR\n"
         "    A[Start] --- B[Work]\n"
@@ -402,6 +457,11 @@ _SELFTEST = {
         "    L --> L2[Loop node 2]\n"
         "    L2 --> L\n"
     ),
+    "self_loop": (
+        "flowchart TD\n"
+        "    A[Start] --> V1[Validation gate]\n"
+        "    V1 -->|retry| V1\n"
+    ),
     "unreachable": (
         "flowchart TD\n"
         "    A[Start] --> T1[Return evidence]\n"
@@ -429,6 +489,7 @@ def selftest() -> int:
         "quoted_label",
         "subgraph",
         "hyphenated_edge_label",
+        "container_edges",
         "link_directions",
         "tight_spacing",
         "fan_out",
@@ -446,6 +507,7 @@ def selftest() -> int:
         ("orphan_no_direction", "orphaned nodes"),
         ("orphan_semicolon_header", "orphaned nodes"),
         ("dead_end", "cannot reach any terminal"),
+        ("self_loop", "cannot reach any terminal"),
         ("unreachable", "unreachable from any start"),
         ("undefined_edge", "edge references undefined node"),
         ("chained_undefined", "edge references undefined node"),
