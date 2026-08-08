@@ -427,19 +427,32 @@ def check_graph(g: Graph) -> List[str]:
     return violations
 
 
+def _is_statement_like(line: str) -> bool:
+    """Is this line readable as a Mermaid statement (as opposed to prose)?"""
+    stripped = line.strip()
+    if not stripped:
+        return True
+    head = stripped.split(None, 1)[0].split("[", 1)[0].split("(", 1)[0]
+    if head in _KEYWORDS:
+        return True
+    residue: List[str] = []
+    _parse_statement(stripped, [], {}, [], residue)
+    return not residue
+
+
 def _trim_unfenced_body(body: str) -> str:
     """Drop trailing prose from an unfenced diagram body.
 
-    A blank line inside a diagram is only a grouping device, so the body runs on
-    while the following content is still indented like a statement; a blank line
-    followed by flush-left text is where the diagram ends and prose begins.
+    A blank line inside a diagram is only a grouping device (common in `.mmd`
+    files, indented or flush-left), so the body runs on while what follows still
+    reads as a statement; a blank line followed by prose ends the diagram.
     """
     lines = body.splitlines()
     for index, line in enumerate(lines):
         if line.strip():
             continue
         following = next((later for later in lines[index + 1 :] if later.strip()), None)
-        if following is None or not following[:1].isspace():
+        if following is None or not _is_statement_like(following):
             return "\n".join(lines[:index])
     return body
 
@@ -618,6 +631,13 @@ _SELFTEST = {
         "\n"
         "    X[Orphan]\n"
     ),
+    "unfenced_flush_left_orphan": (
+        "flowchart TD\n"
+        "A[Start] --> B[Work]\n"
+        "\n"
+        "B --> T[Done]\n"
+        "X[Orphan]\n"
+    ),
     "chained_undefined": (
         "flowchart TD\n"
         "    A[Start] --> B[Work] --> T\n"
@@ -632,6 +652,12 @@ _SELFTEST = {
         "    A[Start] --> B[Work]\n"
         "\n"
         "    B --> T[Done]\n"
+    ),
+    "unfenced_flush_left_groups": (
+        "flowchart TD\n"
+        "A[Start] --> B[Work]\n"
+        "\n"
+        "B --> T[Done]\n"
     ),
     "circle_cross_links": (
         "flowchart LR\n"
@@ -704,6 +730,7 @@ def selftest() -> int:
         "circle_cross_links",
         "inline_label_specials",
         "unfenced_blank_line_groups",
+        "unfenced_flush_left_groups",
         "unfenced_then_prose",
         "two_unfenced_diagrams",
         "class_shorthand",
@@ -733,6 +760,7 @@ def selftest() -> int:
         ("unparsed_statement", "unparsed diagram statement"),
         ("crlf_orphan", "orphaned nodes with no edges"),
         ("unfenced_blank_line_orphan", "orphaned nodes with no edges"),
+        ("unfenced_flush_left_orphan", "orphaned nodes with no edges"),
     ]:
         problems = check_text(_SELFTEST[name])
         if not any(expect_have in p for p in problems):
