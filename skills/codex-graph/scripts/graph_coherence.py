@@ -42,9 +42,9 @@ _ID_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _LINK_RE = re.compile(
     r"""\s*<?
     (?:
-        -{2,}(?:[^|>\n]*?-{2,})?[>xo]?
-      | ={2,}(?:[^|>\n]*?={2,})?[>xo]?
-      | -\.(?:[^|>\n]*?\.)?-+[>xo]?
+        -{2,}(?:[^|>\n\[\](){}&]*?-{2,})?[>xo]?
+      | ={2,}(?:[^|>\n\[\](){}&]*?={2,})?[>xo]?
+      | -\.(?:[^|>\n\[\](){}&]*?\.)?-+[>xo]?
     )\s*""",
     re.VERBOSE,
 )
@@ -120,6 +120,21 @@ def _scan_shape(text: str, start: int) -> Optional[Tuple[str, int]]:
     return None
 
 
+def _link_direction(link: str) -> str:
+    """Classify a link operator: forward, reverse, or both (bidirectional).
+
+    `A <-- B` flows right-to-left and `A <--> B` flows both ways. A link with no
+    arrowhead (`A --- B`) is read in the direction it is drawn, since treating it
+    as bidirectional would make every diagram that opens with one rootless.
+    """
+    operator = link.strip()
+    head = operator.startswith("<")
+    tail = operator.endswith((">", "x", "o"))
+    if head:
+        return "both" if tail else "reverse"
+    return "forward"
+
+
 def _clean_label(raw: str) -> str:
     return raw.strip().strip("[({])}").strip().strip('"').strip()
 
@@ -144,6 +159,7 @@ def _parse_statement(
     index = 0
     length = len(stmt)
     previous: List[str] = []
+    direction = "forward"
     while index < length:
         group: List[str] = []
         while True:
@@ -171,12 +187,17 @@ def _parse_statement(
             break
         for a in previous:
             for b in group:
-                if a != b:
+                if a == b:
+                    continue
+                if direction in ("forward", "both"):
                     edges.append((a, b))
+                if direction in ("reverse", "both"):
+                    edges.append((b, a))
         previous = group
         link = _LINK_RE.match(stmt, index)
         if not link:
             return
+        direction = _link_direction(link.group(0))
         index = link.end()
         if index < length and stmt[index] == "|":
             close = stmt.find("|", index + 1)
@@ -328,6 +349,12 @@ _SELFTEST = {
         "    end\n"
         "    B --> T[Done]\n"
     ),
+    "link_directions": (
+        "flowchart LR\n"
+        "    A[Start] --- B[Work]\n"
+        "    T[Done] <-- B\n"
+        "    B <--> C[Peer]\n"
+    ),
     "hyphenated_edge_label": (
         "flowchart TD\n"
         "    A[Start] -- repair-required --> B[Repair]\n"
@@ -402,6 +429,7 @@ def selftest() -> int:
         "quoted_label",
         "subgraph",
         "hyphenated_edge_label",
+        "link_directions",
         "tight_spacing",
         "fan_out",
     ]:

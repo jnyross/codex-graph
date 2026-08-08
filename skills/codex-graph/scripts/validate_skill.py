@@ -295,7 +295,7 @@ def main() -> None:
     # Structural coherence of every Mermaid diagram in the bundle.
     # A diagram with an orphan, a dead end, or an unreachable node is not
     # executable as designed, regardless of how the prose describes it.
-    for markdown_file in [SKILL, ROOT / "references" / "topology-library.md"]:
+    for markdown_file in [SKILL, *sorted(REQUIRED_REFERENCES)]:
         problems = graph_coherence.check_text(
             markdown_file.read_text(encoding="utf-8")
         )
