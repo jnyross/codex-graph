@@ -46,7 +46,13 @@ python3 skills/codex-graph/scripts/validate_skill.py
 
 The skill bundle also ships a Mermaid graph-coherence linter
 (`skills/codex-graph/scripts/graph_coherence.py`) that checks generated or
-reference diagrams for orphaned, stranded, or unreachable nodes.
+reference diagrams for orphaned, stranded, or unreachable nodes. Pass the files
+to lint, or pipe a diagram in on stdin:
+
+```bash
+python3 skills/codex-graph/scripts/graph_coherence.py skills/codex-graph/SKILL.md
+python3 skills/codex-graph/scripts/graph_coherence.py < diagram.mmd
+```
 
 On Windows, run the validator, graph-coherence linter, and task-collection
 regression suite from Codex Desktop's terminal:

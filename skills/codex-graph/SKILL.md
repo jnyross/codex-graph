@@ -122,8 +122,9 @@ Apply these rules:
     outgoing edge, every terminal has a path into it from a start node, and no
     node is orphaned or stranded. A graph with a dead end or an unreachable
     terminal is not executable as designed. Run
-    `python skills/codex-graph/scripts/graph_coherence.py` on the work's Mermaid
-    or mirror its rules by hand before returning.
+    `python skills/codex-graph/scripts/graph_coherence.py <file.md>` on the file
+    holding the work's Mermaid (or pipe the diagram in on stdin) or mirror its
+    rules by hand before returning.
 16. Many files ≠ parallel. Do not fan out merely because a task touches many
     files. A tightly-coupled change that must be applied in dependency order
     (e.g. a repository-wide rename of one symbol) stays an L0/L1 `small change`
@@ -453,7 +454,7 @@ Before returning the paired deliverable, verify all of the following:
 - The graph has no unbounded cycle and contains at most one repair branch.
 - The graph is complete and reachable: no orphaned or stranded nodes; every
   non-terminal leads to a terminal and every node is reachable from a start
-  node (mirror `scripts/graph_coherence.py`).
+  node (mirror `skills/codex-graph/scripts/graph_coherence.py`).
 - Many files ≠ parallel: a tightly-coupled, dependency-ordered change (e.g. a
   repo-wide rename) is not fanned out just because it touches many files.
 - The Rationale matches the graph actually drawn (same task family, baseline

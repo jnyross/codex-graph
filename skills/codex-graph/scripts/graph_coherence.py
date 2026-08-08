@@ -4,16 +4,19 @@
 A generated workflow graph is only executable if it is structurally coherent:
 every node is defined, none is orphaned, every non-terminal can reach a
 terminal, and every node is reachable from some start. This is a pure-stdlib
-parser + checker for `flowchart TD` / `LR` blocks. It does not classify the
-graph into a task family — it verifies structural executability only, so it
-stays orthogonal to the progressive-complexity tier model.
+parser + checker for `flowchart` / `graph` blocks in any flow direction. It
+does not classify the graph into a task family — it verifies structural
+executability only, so it stays orthogonal to the progressive-complexity tier
+model.
 
 Exit codes:
   0  all checked diagrams are coherent (or --selfcheck passed)
   1  any diagram has an incoherence (or --selfcheck found a bug)
+  2  nothing to check (no paths and no piped diagram on stdin)
 
 Usage:
   python3 graph_coherence.py <file.md ...>     # lint every Mermaid diagram
+  python3 graph_coherence.py < diagram.mmd     # lint a diagram piped on stdin
   python3 graph_coherence.py --selfcheck       # run built-in unit tests
 """
 from __future__ import annotations
@@ -21,16 +24,35 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
-# A[L], A(L), A{L} -> id, label
-_NODE_RE = re.compile(r"([A-Za-z][A-Za-z0-9_]*)\s*([\[\(\{])\s*([^\]\)\}]*?)\s*([\]\)\}])")
-# A --> B, A[L] --> B[L], and their |edge label| variants (edge labels discarded)
-_EDGE_RE = re.compile(
-    r"([A-Za-z][A-Za-z0-9_]*)(?:\s*[\[\(\{][^\]\)\}]*[\]\)\}])?\s*-->"
-    r"(?:\|[^\n]*?\|)?\s*([A-Za-z][A-Za-z0-9_]*)(?:\s*[\[\(\{][^\]\)\}]*[\]\)\}])?"
+_BLOCK_RE = re.compile(
+    r"(?:```mermaid\s*\n)?(?:flowchart|graph)\s+(TD|TB|BT|LR|RL)\s*\n(.*?)(?:\n```|\Z)",
+    re.DOTALL,
 )
-_BLOCK_RE = re.compile(r"(?:```mermaid\s*\n)?flowchart\s+(TD|LR)\s*\n(.*?)(?:\n```|\Z)", re.DOTALL)
+# Hyphens are excluded so a link operator is never absorbed into an id.
+_ID_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Link with inline text: `A -- text --> B`, `A == text ==> B`, `A -. text .-> B`.
+_LINK_TEXT_RE = re.compile(
+    r"\s*(?:--|==)[^|>=\n-][^|>=\n]*?(?:-+|=+)[>xo]?\s*"
+    r"|\s*-\.[^.\n]*\.-+[>xo]?\s*"
+)
+# Bare link: `-->`, `---`, `--x`, `==>`, `-.->`, and their long forms.
+_LINK_RE = re.compile(r"\s*<?(?:-{2,}|={2,}|-\.+-)[>xo]?\s*")
+_SHAPE_OPENERS = "[({>"
+# Statement keywords that never declare an executable node.
+_KEYWORDS = {
+    "subgraph",
+    "end",
+    "direction",
+    "classDef",
+    "class",
+    "style",
+    "linkStyle",
+    "click",
+    "accTitle",
+    "accDescr",
+}
 
 
 class Graph:
@@ -58,19 +80,131 @@ class Graph:
         return [n for n in self.nodes if self.indeg[n] == 0]
 
 
+def _scan_shape(text: str, start: int) -> Optional[Tuple[str, int]]:
+    """Scan a node shape starting at an opener; return (label, index after closer).
+
+    Quote-aware and bracket-depth-aware, so `A["Start (init)"]` and `A[[Sub]]`
+    are read whole instead of being cut at the first closing bracket.
+    """
+    if text[start] == ">":
+        end = text.find("]", start + 1)
+        if end == -1:
+            return None
+        return text[start + 1 : end], end + 1
+    depth = 0
+    quoted = False
+    index = start
+    while index < len(text):
+        char = text[index]
+        if quoted:
+            if char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "[({":
+            depth += 1
+        elif char in "])}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1 : index], index + 1
+        index += 1
+    return None
+
+
+def _clean_label(raw: str) -> str:
+    return raw.strip().strip("[({])}").strip().strip('"').strip()
+
+
+def _parse_statement(
+    stmt: str,
+    nodes: List[str],
+    labels: Dict[str, str],
+    edges: List[Tuple[str, str]],
+) -> None:
+    """Parse one flowchart statement, including chained links and `&` groups."""
+
+    def declare(node_id: str, label: Optional[str]) -> None:
+        # Only a shape declaration defines a node; a bare id is a reference,
+        # so an id that is never given a shape is reported as undefined.
+        if label is None:
+            return
+        if node_id not in nodes:
+            nodes.append(node_id)
+        labels[node_id] = _clean_label(label)
+
+    index = 0
+    length = len(stmt)
+    previous: List[str] = []
+    while index < length:
+        group: List[str] = []
+        while True:
+            while index < length and stmt[index].isspace():
+                index += 1
+            match = _ID_RE.match(stmt, index)
+            if not match:
+                return
+            node_id = match.group(0)
+            index = match.end()
+            label: Optional[str] = None
+            if index < length and stmt[index] in _SHAPE_OPENERS:
+                scanned = _scan_shape(stmt, index)
+                if scanned is None:
+                    return
+                label, index = scanned
+            declare(node_id, label)
+            group.append(node_id)
+            probe = index
+            while probe < length and stmt[probe].isspace():
+                probe += 1
+            if probe < length and stmt[probe] == "&":
+                index = probe + 1
+                continue
+            break
+        for a in previous:
+            for b in group:
+                if a != b:
+                    edges.append((a, b))
+        previous = group
+        link = _LINK_TEXT_RE.match(stmt, index) or _LINK_RE.match(stmt, index)
+        if not link:
+            return
+        index = link.end()
+        if index < length and stmt[index] == "|":
+            close = stmt.find("|", index + 1)
+            if close == -1:
+                return
+            index = close + 1
+
+
 def parse_flowchart(body: str) -> Graph:
     nodes: List[str] = []
     labels: Dict[str, str] = {}
-    for nm in _NODE_RE.finditer(body):
-        nid, _, label, _ = nm.groups()
-        if nid not in nodes:
-            nodes.append(nid)
-        labels[nid] = label.strip()
     edges: List[Tuple[str, str]] = []
-    for em in _EDGE_RE.finditer(body):
-        a, b = em.groups()
-        if a != b:
-            edges.append((a, b))
+    subgraph_ids: Set[str] = set()
+    statements = [
+        stmt
+        for raw_line in body.splitlines()
+        for stmt in raw_line.split("%%", 1)[0].split(";")
+    ]
+    for raw_statement in statements:
+        line = raw_statement.strip()
+        if not line:
+            continue
+        head = line.split(None, 1)[0].split("[", 1)[0].split("(", 1)[0]
+        if head in _KEYWORDS:
+            # A subgraph header declares a container, not an executable node.
+            # Its id is only a node when it is also used as an edge endpoint.
+            if head == "subgraph":
+                remainder = line[len("subgraph") :].strip()
+                container = _ID_RE.match(remainder)
+                if container:
+                    subgraph_ids.add(container.group(0))
+            continue
+        _parse_statement(line, nodes, labels, edges)
+    endpoints = {n for edge in edges for n in edge}
+    nodes = [n for n in nodes if n not in subgraph_ids or n in endpoints]
+    # Mermaid allows a subgraph id as an edge endpoint; then it is a real node.
+    nodes.extend(sorted(s for s in subgraph_ids if s in endpoints and s not in nodes))
     return Graph(nodes, labels, edges)
 
 
@@ -160,8 +294,45 @@ _SELFTEST = {
         "    A --> C[Parallel discovery]\n"
         "    C --> B\n"
     ),
+    "chained": (
+        "flowchart TB\n"
+        "    A[Start] --> B[Work] --> T[Done]\n"
+    ),
+    "link_variants": (
+        "flowchart LR\n"
+        "    A[Start] ==> B[Work]\n"
+        "    B -.-> C[Check]\n"
+        "    C -- gate passes --> T[Done]\n"
+    ),
+    "quoted_label": (
+        "flowchart TD\n"
+        '    A["Start (init)"] --> B[Work]\n'
+        "    B --> T[Done]\n"
+    ),
+    "subgraph": (
+        "flowchart TD\n"
+        "    subgraph S1[Discovery]\n"
+        "        A[Start] --> B[Work]\n"
+        "    end\n"
+        "    B --> T[Done]\n"
+    ),
+    "tight_spacing": (
+        "graph LR\n"
+        "    A[Start]-->|go|B[Work];B-->T[Done];\n"
+    ),
+    "fan_out": (
+        "flowchart TD\n"
+        "    A[Start] --> B[Left] & C[Right]\n"
+        "    B & C --> T[Join]\n"
+    ),
     "orphan": (
         "flowchart TD\n"
+        "    A[Start] --> B[Work]\n"
+        "    B --> T1[Return evidence]\n"
+        "    X[Orphaned node]\n"
+    ),
+    "orphan_other_direction": (
+        "flowchart TB\n"
         "    A[Start] --> B[Work]\n"
         "    B --> T1[Return evidence]\n"
         "    X[Orphaned node]\n"
@@ -185,24 +356,39 @@ _SELFTEST = {
         "flowchart TD\n"
         "    A[Start] --> B\n"
     ),
+    "chained_undefined": (
+        "flowchart TD\n"
+        "    A[Start] --> B[Work] --> T\n"
+    ),
 }
 
 
 def selftest() -> int:
     fails = 0
 
-    ok = check_text(_SELFTEST["coherent"])
-    if ok:
-        print("  [FAIL] coherent diagram should pass, got:", ok)
-        fails += 1
-    else:
-        print("  [ok] coherent diagram passes")
+    for name in [
+        "coherent",
+        "chained",
+        "link_variants",
+        "quoted_label",
+        "subgraph",
+        "tight_spacing",
+        "fan_out",
+    ]:
+        problems = check_text(_SELFTEST[name])
+        if problems:
+            print(f"  [FAIL] {name} diagram should pass, got:", problems)
+            fails += 1
+        else:
+            print(f"  [ok] {name} diagram passes")
 
     for name, expect_have in [
         ("orphan", "orphaned nodes"),
+        ("orphan_other_direction", "orphaned nodes"),
         ("dead_end", "cannot reach any terminal"),
         ("unreachable", "unreachable from any start"),
         ("undefined_edge", "edge references undefined node"),
+        ("chained_undefined", "edge references undefined node"),
     ]:
         problems = check_text(_SELFTEST[name])
         if not any(expect_have in p for p in problems):
@@ -223,6 +409,15 @@ def lint_paths(paths: List[str]) -> List[str]:
     return problems
 
 
+def _report(problems: List[str]) -> int:
+    if not problems:
+        print("PASS: all diagrams are coherent")
+        return 0
+    for p in problems:
+        print(f"INCOHERENT: {p}", file=sys.stderr)
+    return 1
+
+
 def main(argv: List[str]) -> int:
     if "--selfcheck" in argv:
         fails = selftest()
@@ -230,16 +425,18 @@ def main(argv: List[str]) -> int:
         return 1 if fails else 0
 
     paths = [p for p in argv if not p.startswith("--")]
-    if not paths:
-        print(__doc__)
-        return 0
-    problems = lint_paths(paths)
-    if not problems:
-        print("PASS: all diagrams are coherent")
-        return 0
-    for p in problems:
-        print(f"INCOHERENT: {p}", file=sys.stderr)
-    return 1
+    if paths:
+        return _report(lint_paths(paths))
+    if not sys.stdin.isatty():
+        text = sys.stdin.read()
+        if text.strip():
+            problems = check_text(text)
+            if not problems and not extract_blocks(text):
+                print("ERROR: no flowchart diagram found on stdin", file=sys.stderr)
+                return 2
+            return _report([f"<stdin>: {p}" for p in problems])
+    print(__doc__, file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":
