@@ -18,6 +18,8 @@ UNRELEASED_HEADING = re.compile(
     r"^##[ \t]+\[?Unreleased\]?[ \t]*$", re.IGNORECASE | re.MULTILINE
 )
 
+PULL_REQUEST_SUFFIX = re.compile(r"\s+\(#\d+\)$")
+
 
 def parse_version(value: str) -> Version:
     match = re.fullmatch(r"\s*v?(\d+)\.(\d+)\.(\d+)\s*", value)
@@ -78,9 +80,9 @@ def compute_next_version(
 def promote_unreleased(
     changelog: str,
     release_heading: str,
-    fallback_entries: str,
+    subjects: Sequence[str],
 ) -> str | None:
-    """Promote an Unreleased section to a release section when present."""
+    """Promote Unreleased notes and append generated subjects they do not cover."""
     heading = UNRELEASED_HEADING.search(changelog)
     if heading is None:
         return None
@@ -91,10 +93,40 @@ def promote_unreleased(
         else len(changelog)
     )
     body = changelog[heading.end() : section_end]
-    if body.strip():
-        return changelog[: heading.start()] + release_heading + changelog[heading.end() :]
-    replacement = f"{release_heading}\n\n{fallback_entries}\n\n"
-    return changelog[: heading.start()] + replacement + changelog[section_end:]
+    entries = "\n".join(f"- {subject}" for subject in subjects)
+    if not body.strip():
+        replacement = f"{release_heading}\n\n{entries}\n\n"
+        return changelog[: heading.start()] + replacement + changelog[section_end:]
+
+    curated_entries = [
+        line[2:].strip() for line in body.splitlines() if line.startswith("- ")
+    ]
+    unmatched = []
+    for subject in subjects:
+        base = PULL_REQUEST_SUFFIX.sub("", subject).strip()
+        represented = any(
+            entry == subject
+            or entry == base
+            or entry.startswith(f"{base} — ")
+            for entry in curated_entries
+        )
+        if not represented:
+            unmatched.append(subject)
+    if unmatched:
+        if body.endswith("\n\n"):
+            separator = ""
+        elif body.endswith("\n"):
+            separator = "\n"
+        else:
+            separator = "\n\n"
+        generated = "\n".join(f"- {subject}" for subject in unmatched)
+        body += f"{separator}{generated}\n\n"
+    return (
+        changelog[: heading.start()]
+        + release_heading
+        + body
+        + changelog[section_end:]
+    )
 
 
 def rewrite_release_files(
@@ -127,7 +159,7 @@ def rewrite_release_files(
     heading_date = release_date or date.today().isoformat()
     entries = "\n".join(f"- {subject}" for subject in subjects)
     release_heading = f"## [{version}] - {heading_date}"
-    promoted = promote_unreleased(changelog, release_heading, entries)
+    promoted = promote_unreleased(changelog, release_heading, subjects)
     if promoted is not None:
         changelog_path.write_text(promoted)
         return

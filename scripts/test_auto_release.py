@@ -96,6 +96,32 @@ class AutoReleaseTests(unittest.TestCase):
             self.assertEqual(changelog.count("richer detail"), 1)
             self.assertNotIn("- fix: one (#9)", changelog)
 
+    def test_populated_unreleased_appends_unrepresented_subjects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_release_fixture(
+                root,
+                "# Changelog\n\n## Unreleased\n\n"
+                "- fix: one — curated details\n\n"
+                "## [0.2.0] - 2026-01-01\n\n- Old\n",
+            )
+            rewrite_release_files(
+                root,
+                "0.2.1",
+                ["fix: one (#9)", "feat: unrelated (#10)"],
+                "2026-02-03",
+            )
+            changelog = (root / "CHANGELOG.md").read_text()
+            self.assertIn(
+                "## [0.2.1] - 2026-02-03\n\n"
+                "- fix: one — curated details\n\n"
+                "- feat: unrelated (#10)\n\n"
+                "## [0.2.0]",
+                changelog,
+            )
+            self.assertEqual(changelog.count("fix: one"), 1)
+            self.assertEqual(changelog.count("feat: unrelated (#10)"), 1)
+
     def test_bracketed_unreleased_heading_and_exact_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
