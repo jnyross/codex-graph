@@ -111,20 +111,24 @@ async function collectTask({
   let collectionRounds = 0;
   let idlePolls = 0;
   let previousFingerprint;
+  let previousReadFingerprint;
   let terminal;
   const collectedItems = [];
   const calls = [];
   const reads = [];
 
-  async function ingestSnapshot(snapshot, source) {
+  async function ingestSnapshot(snapshot, source, options = {}) {
     if (!snapshot || typeof snapshot !== "object") return;
+    const { collectItems = true } = options;
     const handoff =
       findHandoffInValue(snapshot.terminal, nodeId) ||
       findHandoffInValue(snapshot.items, nodeId) ||
       findHandoffInValue(snapshot.turns, nodeId) ||
       findHandoffInValue(snapshot, nodeId);
     if (handoff) terminal = handoff;
-    if (Array.isArray(snapshot.items)) collectedItems.push(...snapshot.items);
+    if (collectItems && Array.isArray(snapshot.items)) {
+      collectedItems.push(...snapshot.items);
+    }
     if (source === "wait" || source === "read") {
       /* count handled by caller for budget */
     }
@@ -143,6 +147,14 @@ async function collectTask({
     const rawRead = await readThread(readRequest);
     const readSnapshot = unwrapToolSnapshot(rawRead);
     await ingestSnapshot(readSnapshot, "read");
+    previousReadFingerprint = snapshotFingerprint(readSnapshot || {});
+    if (
+      readSnapshot &&
+      typeof readSnapshot === "object" &&
+      readSnapshot.afterCursor !== undefined
+    ) {
+      afterCursor = readSnapshot.afterCursor;
+    }
     if (terminal) {
       return {
         status: terminal.status === "complete" ? "passed" : terminal.status,
@@ -191,6 +203,7 @@ async function collectTask({
 
     // Explicit read after every wait: wait snapshots may omit items when the
     // thread finished between polls; read_thread is the SoT for handoffs.
+    let readCursor;
     if (typeof readThread === "function" && !terminal) {
       const readRequest = {
         threadId,
@@ -201,8 +214,17 @@ async function collectTask({
       reads.push(readRequest);
       const rawRead = await readThread(readRequest);
       const readSnapshot = unwrapToolSnapshot(rawRead);
+      readCursor =
+        readSnapshot && typeof readSnapshot === "object"
+          ? readSnapshot.afterCursor
+          : undefined;
+      const readFingerprint = snapshotFingerprint(readSnapshot || {});
+      const collectItems =
+        previousReadFingerprint === undefined ||
+        readFingerprint !== previousReadFingerprint;
       const before = terminal;
-      await ingestSnapshot(readSnapshot, "read");
+      await ingestSnapshot(readSnapshot, "read", { collectItems });
+      previousReadFingerprint = readFingerprint;
       if (!before && terminal) {
         // Found via read even if wait looked idle — not an idle burn.
         idlePolls = 0;
@@ -211,6 +233,7 @@ async function collectTask({
 
     previousFingerprint = fingerprint;
     if (nextCursor !== undefined) afterCursor = nextCursor;
+    if (readCursor !== undefined) afterCursor = readCursor;
   }
 
   const status = terminal
