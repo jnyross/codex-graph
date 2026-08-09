@@ -78,9 +78,10 @@ Recognized fields (all optional unless noted):
   and comments cannot flip the verdict. Helper names bound to exactly one
   of the two tools — a function-like binding (`const readFor = … =>`,
   `resolveTool`, `.bind`) or a declared function whose bounded body window
-  references the tool — count as call sites for that tool; a helper
-  touching both tools is ambiguous and votes for neither, so mixed
-  collectors (direct wait, wrapped reads) are judged correctly.
+  references the tool — count only when awaited as standalone call targets;
+  member/property and identifier-suffix matches do not count. A helper
+  touching both tools is ambiguous and votes for neither, so mixed collectors
+  (direct wait, wrapped reads) are judged correctly.
   `read_first` fails when the first wait call site precedes any read call
   site; `read_after_wait` requires a read call site after the first wait.
   When no call sites resolve at all, ordering is not judged — the
