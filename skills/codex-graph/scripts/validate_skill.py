@@ -190,6 +190,10 @@ def main() -> None:
         "Never correlate by array index",
         "invalid handoff sighting",
         "reflecting actual progress",
+        "a clipped window is not proof of absence",
+        "newest turns first",
+        "consecutive tool errors",
+        "last raw read result",
     ]:
         if required_phrase not in text:
             fail(f"missing required behavior: {required_phrase}")
@@ -239,6 +243,13 @@ def main() -> None:
         "post-repair marker",
         "Never correlate by array index",
         "reflecting actual progress",
+        "Collection read bounds and error envelopes",
+        "openai/codex#30058",
+        "a clipped window is not proof of absence",
+        "tool error, not an empty snapshot",
+        "verbatim error string",
+        "newest turns first",
+        "last raw read result",
     ]:
         if required_phrase not in lifecycle:
             fail(f"task lifecycle reference is missing: {required_phrase}")
@@ -297,6 +308,10 @@ def main() -> None:
         "stale pre-repair handoff",
         "post-repair marker",
         "Never correlate by array index",
+        "a clipped window is not proof of absence",
+        "openai/codex#30058",
+        "tool error, not an empty snapshot",
+        "last raw read result",
     ]:
         if required_phrase not in patterns:
             fail(f"code patterns are missing verified graph lesson: {required_phrase}")

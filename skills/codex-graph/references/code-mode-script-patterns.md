@@ -231,6 +231,29 @@ the blocked report unrecoverable.
 
 Task reads return structured turns and `items`; they are not guaranteed to expose one flat text field. Recursively inspect the structured result and validate the required JSON handoff against the node ID and schema. Request the tool's supported output size rather than assuming a universal item limit.
 
+Task reads return a bounded window of the newest turns first (LAST-N; the
+open-source `thread/turns/list` handler sorts newest-first by default and
+truncates to the requested limit). The latest handoff is on the first page of
+a fresh read. Omit `turnLimit` from read calls or keep it at or below 10 —
+ChatGPT Desktop rejects larger values (openai/codex#30058), and the rejection
+arrives as a bare string tool result, not a thrown error. Page with the
+returned cursor only when older history is needed. Reads may return a clipped
+or windowed view; a clipped window is not proof of absence — a short or
+clipped window means keep polling within budget, never conclude absence.
+
+Shape-check every read and wait result before use. A top-level string result,
+or an `error`/`isError` indicator or message-only body with no
+`turns`/`items`/`terminal` payload, is a
+tool error, not an empty snapshot; a result carrying real payload is a
+snapshot even when a non-fatal error field rides along. Allow at most 3
+consecutive tool errors per handle, then abort
+that handle's collection with a named blocker embedding the verbatim error
+string; never spin a collection window on errored reads. A collection abort or
+window expiry must embed the last raw read result, truncated to a named cap,
+in the blocked terminal for that handle. The normative contract and code
+sample live in `task-lifecycle.md` under "Collection read bounds and error
+envelopes".
+
 A wait timeout is not by itself a task failure. Use the active tool's wait semantics; if it can return immediately or run indefinitely, add a named deadline and polling strategy based on the observed behavior.
 
 Accept explicit checkpoints and resume handles for long graphs. Validate active handles by node ID, project ID, host ID, model policy, and ready task ID, then collect the existing task. Reuse compact handoffs for completed nodes. Create `not_started` nodes normally after their dependencies pass; do not require a handle for a future stage. A resume path must not duplicate completed or active work.
@@ -503,6 +526,8 @@ Do not call `exit()` inside the `try` block. Keep early-stop decisions as return
 - Treating one wait timeout as terminal failure without reading fresh task state.
 - Using only an attempt count when the wait tool can return immediately.
 - Requesting more than the task-read item limit or ignoring structured `items`.
+- Requesting `turnLimit` above 10, or treating a bare-string or error-envelope tool result as an empty snapshot and burning the collection window on it.
+- Paging backwards for a final handoff that a newest-first read already returned on the first page.
 - Slicing JSON to fit a prompt instead of using a compact handoff contract and expansion queue.
 - Treating the compact handoff as the only evidence store and losing source locators or required fields.
 - Letting an audit invent a cutoff, sample size, or scope that conflicts with the declared pilot.

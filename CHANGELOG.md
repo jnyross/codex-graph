@@ -9,6 +9,7 @@ All notable product releases are documented here.
 - fix: expectations checker resolves read/wait helper names as call sites so mixed wrapper collectors (direct wait, helper-bound reads) are judged correctly instead of false-failing `read-after-wait`, and declaring `collection` now requires at least one resolved call site so a call-free stub can no longer pass via the ordering carve-out
 - fix: matcher name/preview keys, bracketed per-node tag guard with claimed-id exclusion, worktree git preflight
 - fix: validator satisfiability + repair correlation contracts — dry-run acceptance validators for a reachable pass verdict, never reuse batch-level validators on subset payloads, target repair from verdict affected IDs, accept only post-repair handoffs on recollect, skip invalid handoff sightings, preserve executed_nodes in blocked and failed terminals (Lisbon dogfood v5)
+- fix: collection read bounds + error-envelope fail-fast — task reads omit `turnLimit` or bound it at 10 (ChatGPT Desktop rejects larger reads; openai/codex#30058) and return the newest turns first so the latest handoff is on the first page ("a clipped window is not proof of absence"); bare-string and error-envelope tool results are classified as tool errors, never as empty snapshots, with a bounded 3-consecutive-error abort embedding the verbatim error in a named blocker; blocked collections embed the last raw read result truncated to a named cap (Lisbon v5+v3 dogfood forensics)
 
 ## [0.5.4] - 2026-08-09
 
