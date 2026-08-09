@@ -144,36 +144,45 @@ function isValidTerminalHandoff(value, nodeId) {
   );
 }
 
-/** Recursively find a schema-valid handoff for nodeId in any nested structure. */
-function findHandoffInValue(value, nodeId, seen = new Set()) {
-  if (value == null) return null;
+/** Recursively yield schema-valid handoffs for nodeId in depth-first order. */
+function* iterateHandoffsInValue(value, nodeId, seen = new Set()) {
+  if (value == null) return;
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (
       !(trimmed.startsWith("{") || trimmed.startsWith("[")) ||
       seen.has(trimmed)
     ) {
-      return null;
+      return;
     }
     seen.add(trimmed);
     try {
-      return findHandoffInValue(JSON.parse(trimmed), nodeId, seen);
+      yield* iterateHandoffsInValue(JSON.parse(trimmed), nodeId, seen);
     } catch {
-      return null;
+      return;
     }
+    return;
   }
-  if (typeof value !== "object") return null;
-  if (isValidTerminalHandoff(value, nodeId)) return value;
+  if (typeof value !== "object") return;
+  if (isValidTerminalHandoff(value, nodeId)) {
+    yield value;
+    return;
+  }
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = findHandoffInValue(item, nodeId, seen);
-      if (found) return found;
+      yield* iterateHandoffsInValue(item, nodeId, seen);
     }
-    return null;
+    return;
   }
   for (const nested of Object.values(value)) {
-    const found = findHandoffInValue(nested, nodeId, seen);
-    if (found) return found;
+    yield* iterateHandoffsInValue(nested, nodeId, seen);
+  }
+}
+
+/** Recursively find a schema-valid handoff for nodeId in any nested structure. */
+function findHandoffInValue(value, nodeId, seen = new Set()) {
+  for (const handoff of iterateHandoffsInValue(value, nodeId, seen)) {
+    return handoff;
   }
   return null;
 }
@@ -203,6 +212,9 @@ async function collectTask({
   maxIdlePolls = 4,
   maxOutputCharsPerItem = MAX_OUTPUT_CHARS_PER_ITEM,
   delay = async () => {},
+  repairMarker,
+  startCursor,
+  validateHandoff,
 }) {
   if (maxOutputCharsPerItem > MAX_OUTPUT_CHARS_PER_ITEM) {
     throw new RangeError(
@@ -210,7 +222,9 @@ async function collectTask({
     );
   }
 
-  let afterCursor;
+  // startCursor seeds cursor provenance: a cursor recorded before the repair
+  // send makes cursor-respecting read tools return only post-repair content.
+  let afterCursor = startCursor;
   let collectionRounds = 0;
   let idlePolls = 0;
   let previousFingerprint;
@@ -218,18 +232,69 @@ async function collectTask({
   let terminal;
   const collectedItems = [];
   const seenItemKeys = new Set();
+  const invalidSightings = [];
+  const seenHandoffKeys = new Set();
   const calls = [];
   const reads = [];
+
+  function recordSighting(errors, handoff) {
+    const key = JSON.stringify(handoff);
+    if (!seenHandoffKeys.has(key)) {
+      seenHandoffKeys.add(key);
+      invalidSightings.push({ errors, handoff });
+    }
+  }
+
+  function acceptHandoff(handoff) {
+    const isSuccessStatus =
+      handoff.status === "complete" || handoff.status === "passed";
+    if (
+      isSuccessStatus &&
+      repairMarker !== undefined &&
+      !handoff[repairMarker]
+    ) {
+      // Post-repair correlation is by explicit marker (plus cursor
+      // provenance), never by array index into a returned turn list: reads
+      // may return a clipped window, so an index is meaningless and a short
+      // window is not proof of absence. A marker-less complete handoff is
+      // the stale pre-repair artifact — skip it and keep collecting.
+      recordSighting(
+        [`missing post-repair marker "${repairMarker}"`],
+        handoff,
+      );
+      return false;
+    }
+    if (isSuccessStatus && typeof validateHandoff === "function") {
+      const errors = validateHandoff(handoff);
+      if (Array.isArray(errors) && errors.length > 0) {
+        // Structurally invalid sighting, not a terminal: skip and keep
+        // collecting (including later handoffs in this same snapshot).
+        // Explicit blocked/failed status always terminates.
+        recordSighting(errors, handoff);
+        return false;
+      }
+    }
+    terminal = handoff;
+    return true;
+  }
+
+  function ingestHandoffsFrom(root) {
+    for (const handoff of iterateHandoffsInValue(root, nodeId)) {
+      if (acceptHandoff(handoff)) return true;
+    }
+    return false;
+  }
 
   async function ingestSnapshot(snapshot, source, options = {}) {
     if (!snapshot || typeof snapshot !== "object") return;
     const { collectItems = true } = options;
-    const handoff =
-      findHandoffInValue(snapshot.terminal, nodeId) ||
-      findHandoffInValue(snapshot.items, nodeId) ||
-      findHandoffInValue(snapshot.turns, nodeId) ||
-      findHandoffInValue(snapshot, nodeId);
-    if (handoff) terminal = handoff;
+    // All fallback surfaces stay searched in repair mode; post-repair
+    // provenance is a content FILTER (repairMarker in acceptHandoff), not a
+    // restriction of the search surface.
+    ingestHandoffsFrom(snapshot.terminal) ||
+      ingestHandoffsFrom(snapshot.items) ||
+      ingestHandoffsFrom(snapshot.turns) ||
+      ingestHandoffsFrom(snapshot);
     if (collectItems && Array.isArray(snapshot.items)) {
       for (const item of snapshot.items) {
         let key;
@@ -256,6 +321,7 @@ async function collectTask({
       threadId,
       maxOutputCharsPerItem,
       includeOutputs: true,
+      ...(afterCursor !== undefined ? { afterCursor } : {}),
     };
     reads.push(readRequest);
     const rawRead = await readThread(readRequest);
@@ -274,6 +340,7 @@ async function collectTask({
         status: terminal.status === "complete" ? "passed" : terminal.status,
         terminal,
         collectedItems,
+        invalidSightings,
         afterCursor,
         calls,
         reads,
@@ -366,6 +433,7 @@ async function collectTask({
     status,
     terminal,
     collectedItems,
+    invalidSightings,
     afterCursor,
     calls,
     reads,

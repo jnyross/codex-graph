@@ -183,6 +183,13 @@ def main() -> None:
         "bracketed exact form `[<runTag>]`",
         "per-node unique",
         "claimed thread id",
+        "no reachable pass verdict",
+        "subset payloads",
+        "mapped to node IDs",
+        "post-repair marker",
+        "Never correlate by array index",
+        "invalid handoff sighting",
+        "reflecting actual progress",
     ]:
         if required_phrase not in text:
             fail(f"missing required behavior: {required_phrase}")
@@ -227,6 +234,11 @@ def main() -> None:
         "no cross-binding, no double-claim",
         "isGitRepository === true",
         "named `unresolved_risk`",
+        "stale pre-repair handoff",
+        "invalid handoff sighting",
+        "post-repair marker",
+        "Never correlate by array index",
+        "reflecting actual progress",
     ]:
         if required_phrase not in lifecycle:
             fail(f"task lifecycle reference is missing: {required_phrase}")
@@ -277,6 +289,14 @@ def main() -> None:
         "bracketed exact form `[<runTag>]`",
         "per-node unique",
         "claimed thread id",
+        "minimal conforming draft",
+        "no reachable pass verdict",
+        "subset payloads",
+        "criterion-prefix",
+        "mapped to node IDs",
+        "stale pre-repair handoff",
+        "post-repair marker",
+        "Never correlate by array index",
     ]:
         if required_phrase not in patterns:
             fail(f"code patterns are missing verified graph lesson: {required_phrase}")

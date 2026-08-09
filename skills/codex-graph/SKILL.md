@@ -248,7 +248,7 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
    exists; for the current task-read declaration, never request more than
    `20000`. Carry each returned pagination cursor (such as `afterCursor`) into
    the next collection call; unchanged snapshots must not consume collection
-   rounds. Do not assume the result is one flat text field.
+   rounds. Do not assume the result is one flat text field. A structurally invalid handoff sighting is not terminal: skip it and keep collecting within the window. Reserve fail-closed for an explicit worker `blocked` or `failed` status or window exhaustion. This governs worker handoff sightings; a malformed validator verdict still fails closed at the acceptance gate.
 10. Pass complete structured handoffs by default. Add a payload budget only
    when the active tool declares one or an observed run demonstrates a limit.
    Keep large evidence in an approved durable artifact when needed, and never
@@ -262,13 +262,13 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
 12. Define accepted transport shapes and deterministic adapters before execution. Normalize a schema-declared equivalent shape, such as a shard object containing `record_ids`, to the canonical internal form before cardinality and field validation. Do not reject a semantically complete handoff only because its declared wrapper differs, and do not use permissive guessing for undeclared shapes.
 13. At L4, support explicit checkpoints and resume handles for long task graphs. A checkpoint separates `complete`, `active`, and `not_started` nodes. Reuse complete handoffs, validate and collect active handles, and create not-started nodes normally when their dependencies pass. Never require a resume handle for a node that has not started.
 14. Build one terminal result and emit it exactly once with a `terminalEmitted` guard. Do not call `exit()` inside a catchable orchestration block; an exit signal can be caught and cause a second terminal result.
-15. Include per-node start or collection errors and every still-live handle when the workflow blocks.
+15. Include per-node start or collection errors and every still-live handle when the workflow blocks. A blocked or failed terminal must preserve `executed_nodes` reflecting actual progress; never reset it to an empty list in a catch path.
 16. Give workers self-contained prompts containing the goal, node contract, allowed scope, dependencies, required handoff schema, output budget, and prohibition on nested delegation.
 17. Use one integration owner. Pass upstream handoffs to it as a bounded, clearly labelled manifest or artifact references, never as an unbounded combined payload.
 18. At L3, fan out validation when independent record batches or audit lenses exist. Join their machine-readable decisions at one root-owned acceptance gate; no validator can approve the whole artifact alone.
-19. Require each validator to return machine-readable JSON with `pass` or `repair`, failed criteria, affected IDs, evidence, and repair instructions. Each failed criterion must cite the declared acceptance-contract ID. Reject criteria, cutoffs, or scope additions that were not declared before execution.
+19. Require each validator to return machine-readable JSON with `pass` or `repair`, failed criteria, affected IDs, evidence, and repair instructions. Each failed criterion must cite the declared acceptance-contract ID. Reject criteria, cutoffs, or scope additions that were not declared before execution. Dry-run the acceptance validator against a minimal conforming draft before executing; a validator with no reachable pass verdict is a generation defect. Never reuse a batch-level validator on subset payloads; each criterion validates the payload shape it receives.
 20. Implement the repair path as a single `if` block, not a loop. Set and report `repairUsed` explicitly.
-21. If initial validation requests repair, execute exactly one logical repair stage. At L4, many defective records may fan out bounded record-specific corrections, but one serial repair owner must normalize every correction to the canonical schema and integrate them once. Repair instructions must stay inside the fixed scope and acceptance contract. Re-run the affected audit lanes plus any changed global invariant. If revalidation does not pass, stop with evidence.
+21. If initial validation requests repair, execute exactly one logical repair stage. At L4, many defective records may fan out bounded record-specific corrections, but one serial repair owner must normalize every correction to the canonical schema and integrate them once. Repair instructions must stay inside the fixed scope and acceptance contract. Re-run the affected audit lanes plus any changed global invariant. If revalidation does not pass, stop with evidence. Select repair targets from the validator verdict's `affected_ids` mapped to node IDs; never derive them from a criterion-prefix pattern. The repair boundary of affected existing workers means exactly those nodes. Require the repair prompt to demand an explicit post-repair marker in the corrected handoff (for example a `corrected_at` timestamp) and filter recollection on that marker; add cursor or turn-id provenance when the read tool provides it. Never correlate by array index into a returned turn list. A stale pre-repair handoff is not a corrected handoff.
 22. Keep all polling and operational retries visible through named constants and explicit maximums. A same-model capacity retry is separate from artifact repair and is allowed only when the graph declares one clean retry and forbids model substitution.
 23. Keep orchestration scaffolding temporary and separate from product code unless the user's goal explicitly requires it as a repository artifact.
 
@@ -465,6 +465,8 @@ Before returning the paired deliverable, verify all of the following:
 - Required tools are discovered or bound from actual exposed metadata; no tool APIs are invented.
 - Integration ownership, fail-closed behavior, and the one-repair rule are encoded in code; concurrency caps are added only when justified by active tools or observations.
 - Validator decisions are machine-readable and malformed decisions fail closed.
+- The acceptance validator has a reachable pass verdict for a minimal conforming draft; no batch-level validator is reused on subset payloads.
+- Repair targets come from the verdict's affected IDs mapped to node IDs, and repair recollection accepts only corrected handoffs carrying the required post-repair marker.
 - Saved-project graphs resolve and preserve the exact project ID; per-node environment: read-only tasks use local and writing tasks use worktrees (never global worktree for one writer); worktree targets are gated on `isGitRepository === true`.
 - Self-testing freezes acceptance before the child starts, accepts only explicit child evidence, records observed roadmap items, and uses at most one root-cause repair and re-run.
 - Pending setup handles are retained and resolved; wait timeouts are checked against fresh task state.
@@ -475,6 +477,8 @@ Before returning the paired deliverable, verify all of the following:
 - Resume handles collect existing tasks instead of creating duplicates.
 - A collection-budget stop preserves completed handoffs and active handles for resume.
 - The script builds and emits exactly one terminal result.
+- An invalid handoff sighting is skipped, not terminal; fail-closed is reserved for explicit worker blocked or failed status or window exhaustion.
+- Blocked and failed terminals preserve `executed_nodes` reflecting actual progress.
 - The exact required run sentence appears once.
 - Worktree guidance is conditional on repository-changing work.
 - Success criteria and terminal evidence are observable.

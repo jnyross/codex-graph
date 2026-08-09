@@ -337,6 +337,8 @@ the repair.
 
 Each validator must cite a declared acceptance criterion. It cannot require a larger sample or new coverage domain after the run starts. The root gate rejects repair instructions that contradict the fixed scope or cannot be completed within the one declared repair stage.
 
+Dry-run the acceptance validator against a minimal conforming draft before executing; a validator with no reachable pass verdict is a generation defect. Never reuse a batch-level validator on subset payloads; each criterion validates the payload shape it receives. Observed: Lisbon dogfood v5 — the root gate rewrapped each selected candidate as a one-candidate handoff and revalidated it with the batch-level worker validator that requires at least five candidates, so every run failed regardless of input.
+
 When a validator compares URLs or other link fields across artifacts, decode
 HTML entities before comparing so markup-escaping differences do not consume
 the single repair allowance. RSS and HTML sources routinely deliver `&amp;`,
@@ -361,6 +363,8 @@ criterion.
 ## Exactly one repair, unrolled
 
 Do not use a retry loop. Keep the branch visible.
+
+Select repair targets from the validator verdict's `affected_ids` mapped to node IDs; never derive them from a criterion-prefix pattern. The repair boundary of affected existing workers means exactly those nodes. Require the repair prompt to demand an explicit post-repair marker in the corrected handoff (for example a `corrected_at` timestamp) and filter recollection on that marker; add cursor or turn-id provenance when the read tool provides it. Never correlate by array index into a returned turn list. A stale pre-repair handoff is not a corrected handoff. Reads may return a clipped window, and a clipped window is not proof of absence — a handoff not yet visible means keep polling within budget under the collection read-bounds contract. Observed: Lisbon dogfood v5 — a criterion-prefix pattern matched every failed criterion, so the affected set degenerated to all workers while the verdict's `affected_ids` went unused.
 
 If L4 is active and many records need corrections, keep one logical repair
 branch but split its internal work into bounded record-specific correction
