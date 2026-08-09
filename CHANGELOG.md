@@ -2,30 +2,21 @@
 
 All notable product releases are documented here.
 
-## Unreleased
-
-- fix: choose task environment per node (local for read-only, worktree only for writers) and strengthen pending `clientThreadId` resolution (Lisbon dogfood v4)
-- feat: dynamic-workflow golden test cases under `skills/codex-graph/testcases/` — six case bundles derived from real Grok Rhai and Claude multi-agent orchestration shapes (atomic screen fan-out, slice generators, sealed POV + adversarial fact-check, non-binding synthesis, dual validation, disjoint worktree writers), an offline expectations checker (`harness/`), pattern-derived collection tests, and catalog research in `docs/dynamic-workflow-testcase-catalog.md`; both regression runners now execute the new suite and lint the topology hints
-- fix: expectations checker resolves read/wait helper names as call sites so mixed wrapper collectors (direct wait, helper-bound reads) are judged correctly instead of false-failing `read-after-wait`, and declaring `collection` now requires at least one resolved call site so a call-free stub can no longer pass via the ordering carve-out
-- fix: matcher name/preview keys, bracketed per-node tag guard with claimed-id exclusion, worktree git preflight
-- fix: validator satisfiability + repair correlation contracts — dry-run acceptance validators for a reachable pass verdict, never reuse batch-level validators on subset payloads, target repair from verdict affected IDs, accept only post-repair handoffs on recollect, skip invalid handoff sightings, preserve executed_nodes in blocked and failed terminals (Lisbon dogfood v5)
-- fix: collection read bounds + error-envelope fail-fast — task reads omit `turnLimit` or bound it at 10 (ChatGPT Desktop rejects larger reads; openai/codex#30058) and return the newest turns first so the latest handoff is on the first page ("a clipped window is not proof of absence"); bare-string and error-envelope tool results are classified as tool errors, never as empty snapshots, with a bounded 3-consecutive-error abort embedding the verbatim error in a named blocker; blocked collections embed the last raw read result truncated to a named cap (Lisbon v5+v3 dogfood forensics)
-
 ## [0.5.5] - 2026-08-09
 
-- fix: collection read bounds + error-envelope fail-fast (#21)
+- fix: collection read bounds + error-envelope fail-fast — task reads omit `turnLimit` or bound it at 10 (ChatGPT Desktop rejects larger reads; openai/codex#30058) and return the newest turns first so the latest handoff is on the first page ("a clipped window is not proof of absence"); bare-string and error-envelope tool results are classified as tool errors, never as empty snapshots, with a bounded 3-consecutive-error abort embedding the verbatim error in a named blocker; blocked collections embed the last raw read result truncated to a named cap (Lisbon v5+v3 dogfood forensics) (#21)
 
 ## [0.5.4] - 2026-08-09
 
-- fix: validator satisfiability + repair correlation contracts (#18)
+- fix: validator satisfiability + repair correlation contracts — dry-run acceptance validators for a reachable pass verdict, never reuse batch-level validators on subset payloads, target repair from verdict affected IDs, accept only post-repair handoffs on recollect, skip invalid handoff sightings, preserve executed_nodes in blocked and failed terminals (Lisbon dogfood v5) (#18)
 
 ## [0.5.3] - 2026-08-09
 
-- fix: thread-list matcher robustness + worktree preflight gate (#17)
+- fix: matcher name/preview keys, bracketed per-node tag guard with claimed-id exclusion, worktree git preflight (#17)
 
 ## [0.5.2] - 2026-08-09
 
-- fix: resolve helper call sites and reject call-free collectors (#20)
+- fix: expectations checker resolves read/wait helper names as call sites so mixed wrapper collectors (direct wait, helper-bound reads) are judged correctly instead of false-failing `read-after-wait`, and declaring `collection` now requires at least one resolved call site so a call-free stub can no longer pass via the ordering carve-out (#20)
 
 ## [0.5.1] - 2026-08-09
 
@@ -33,11 +24,11 @@ All notable product releases are documented here.
 
 ## [0.5.0] - 2026-08-09
 
-- feat: dynamic-workflow golden test cases from real orchestration shapes (#16)
+- feat: dynamic-workflow golden test cases under `skills/codex-graph/testcases/` — six case bundles derived from real Grok Rhai and Claude multi-agent orchestration shapes (atomic screen fan-out, slice generators, sealed POV + adversarial fact-check, non-binding synthesis, dual validation, disjoint worktree writers), an offline expectations checker (`harness/`), pattern-derived collection tests, and catalog research in `docs/dynamic-workflow-testcase-catalog.md`; both regression runners now execute the new suite and lint the topology hints (#16)
 
 ## [0.4.5] - 2026-08-09
 
-- fix: per-node environment + pending clientThreadId resolution (#14)
+- fix: choose task environment per node (local for read-only, worktree only for writers) and strengthen pending `clientThreadId` resolution (Lisbon dogfood v4) (#14)
 
 ## [0.4.4] - 2026-08-09
 
