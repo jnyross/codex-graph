@@ -246,9 +246,16 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
 9. Read task results through their structured turns and `items`. Respect
    `maxOutputCharsPerItem` or any other active tool-declared read limit when one
    exists; for the current task-read declaration, never request more than
-   `20000`. Carry each returned pagination cursor (such as `afterCursor`) into
-   the next collection call; unchanged snapshots must not consume collection
-   rounds. Do not assume the result is one flat text field. A structurally invalid handoff sighting is not terminal: skip it and keep collecting within the window. Reserve fail-closed for an explicit worker `blocked` or `failed` status or window exhaustion. This governs worker handoff sightings; a malformed validator verdict still fails closed at the acceptance gate.
+   `20000`, and omit `turnLimit` or keep it at or below 10 (ChatGPT Desktop
+   rejects larger reads; openai/codex#30058). Reads return the newest turns first,
+   so the latest handoff is on the first page; a clipped window is not proof of absence
+   — keep polling within budget. Shape-check every read or wait result: a
+   bare-string result or error envelope is a tool error, not an empty snapshot;
+   after 3 consecutive tool errors abort that handle's collection with a named
+   blocker embedding the verbatim error string. Carry each returned pagination
+   cursor (such as `afterCursor`) into the next collection call; unchanged
+   snapshots must not consume collection rounds. Do not assume the result is
+   one flat text field. A structurally invalid handoff sighting is not terminal: skip it and keep collecting within the window. Reserve fail-closed for an explicit worker `blocked` or `failed` status or window exhaustion. This governs worker handoff sightings; a malformed validator verdict still fails closed at the acceptance gate.
 10. Pass complete structured handoffs by default. Add a payload budget only
    when the active tool declares one or an observed run demonstrates a limit.
    Keep large evidence in an approved durable artifact when needed, and never
@@ -262,7 +269,7 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
 12. Define accepted transport shapes and deterministic adapters before execution. Normalize a schema-declared equivalent shape, such as a shard object containing `record_ids`, to the canonical internal form before cardinality and field validation. Do not reject a semantically complete handoff only because its declared wrapper differs, and do not use permissive guessing for undeclared shapes.
 13. At L4, support explicit checkpoints and resume handles for long task graphs. A checkpoint separates `complete`, `active`, and `not_started` nodes. Reuse complete handoffs, validate and collect active handles, and create not-started nodes normally when their dependencies pass. Never require a resume handle for a node that has not started.
 14. Build one terminal result and emit it exactly once with a `terminalEmitted` guard. Do not call `exit()` inside a catchable orchestration block; an exit signal can be caught and cause a second terminal result.
-15. Include per-node start or collection errors and every still-live handle when the workflow blocks. A blocked or failed terminal must preserve `executed_nodes` reflecting actual progress; never reset it to an empty list in a catch path.
+15. Include per-node start or collection errors and every still-live handle when the workflow blocks. A blocked or failed terminal must preserve `executed_nodes` reflecting actual progress; never reset it to an empty list in a catch path. A collection abort or window expiry must embed that handle's last raw read result, truncated to a named cap.
 16. Give workers self-contained prompts containing the goal, node contract, allowed scope, dependencies, required handoff schema, output budget, and prohibition on nested delegation.
 17. Use one integration owner. Pass upstream handoffs to it as a bounded, clearly labelled manifest or artifact references, never as an unbounded combined payload.
 18. At L3, fan out validation when independent record batches or audit lenses exist. Join their machine-readable decisions at one root-owned acceptance gate; no validator can approve the whole artifact alone.
@@ -472,6 +479,9 @@ Before returning the paired deliverable, verify all of the following:
 - Pending setup handles are retained and resolved; wait timeouts are checked against fresh task state.
 - Early-returning wait tools cannot consume the full collection budget in a tight loop.
 - Task reads respect the active tool's declared item limit and parse structured `items`.
+- Collection reads omit `turnLimit` or bound it at 10, classify error envelopes
+  as tool errors with a bounded consecutive-error abort, and embed the last raw
+  read result in blocked terminals.
 - Worker handoffs use the active transport directly, or staged fan-in when an observed limit requires it; never use blind JSON truncation.
 - Independent audit lenses fan out and converge at one root-owned gate.
 - Resume handles collect existing tasks instead of creating duplicates.

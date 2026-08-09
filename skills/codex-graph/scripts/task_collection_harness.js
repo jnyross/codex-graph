@@ -1,6 +1,13 @@
 "use strict";
 
 const MAX_OUTPUT_CHARS_PER_ITEM = 20000;
+// ChatGPT Desktop rejects read_thread turnLimit above 10 (openai/codex#30058).
+const MAX_TURN_LIMIT = 10;
+// Consecutive errored wait/read results allowed per handle before collection
+// aborts with a named blocker (a clean read resets the count).
+const MAX_CONSECUTIVE_TOOL_ERRORS = 3;
+// Cap for the last raw read result embedded in a blocked terminal.
+const FORENSIC_RESULT_CAP = 2000;
 
 function snapshotFingerprint(snapshot) {
   return JSON.stringify({
@@ -203,11 +210,72 @@ function unwrapToolSnapshot(raw) {
   return normalized.value;
 }
 
+/**
+ * Classify a wait/read tool result that is not a usable snapshot.
+ * Returns the error text, or null when the value is a real snapshot.
+ * Observed on ChatGPT Desktop (Lisbon v5 forensics): a rejected read returns
+ * the BARE STRING "read_thread received invalid arguments: turnLimit: Too
+ * big: expected number to be <=10." — not a thrown error, not an error
+ * object. Treating it as "no handoff yet" burned three 35-minute collection
+ * windows while three complete handoffs sat unread.
+ */
+function toolErrorText(value) {
+  if (typeof value === "string") return value;
+  if (value == null) return "empty tool result";
+  if (typeof value !== "object") return String(value);
+  if (
+    value.turns !== undefined ||
+    value.items !== undefined ||
+    value.terminal !== undefined
+  ) {
+    // Prefer the payload: a snapshot carrying real turns/items/terminal is a
+    // snapshot even when a non-fatal error field rides along.
+    return null;
+  }
+  if (
+    value.isError === true ||
+    value.is_error === true ||
+    value.error != null
+  ) {
+    if (typeof value.error === "string") return value.error;
+    if (typeof value.message === "string") return value.message;
+    try {
+      return JSON.stringify(value.error ?? value);
+    } catch {
+      return String(value.error ?? value);
+    }
+  }
+  if (typeof value.message === "string") {
+    return value.message;
+  }
+  return null;
+}
+
+/** Truncate a raw tool result for the blocked-terminal forensic floor. */
+function truncateForensic(raw) {
+  if (raw === undefined) return undefined;
+  let text;
+  if (typeof raw === "string") {
+    text = raw;
+  } else {
+    try {
+      text = JSON.stringify(raw);
+    } catch {
+      text = String(raw);
+    }
+  }
+  if (typeof text !== "string") text = String(text);
+  return text.length > FORENSIC_RESULT_CAP
+    ? `${text.slice(0, FORENSIC_RESULT_CAP)} … [truncated ${text.length - FORENSIC_RESULT_CAP} chars]`
+    : text;
+}
+
 async function collectTask({
   nodeId,
   threadId,
   waitThreads,
   readThread,
+  turnLimit,
   maxCollectionRounds = 4,
   maxIdlePolls = 4,
   maxOutputCharsPerItem = MAX_OUTPUT_CHARS_PER_ITEM,
@@ -221,12 +289,19 @@ async function collectTask({
       `maxOutputCharsPerItem exceeds ${MAX_OUTPUT_CHARS_PER_ITEM}`,
     );
   }
+  if (turnLimit !== undefined && turnLimit > MAX_TURN_LIMIT) {
+    throw new RangeError(
+      `turnLimit exceeds ${MAX_TURN_LIMIT} (ChatGPT Desktop rejects larger reads; openai/codex#30058)`,
+    );
+  }
 
   // startCursor seeds cursor provenance: a cursor recorded before the repair
   // send makes cursor-respecting read tools return only post-repair content.
   let afterCursor = startCursor;
   let collectionRounds = 0;
   let idlePolls = 0;
+  let consecutiveToolErrors = 0;
+  let lastReadResult;
   let previousFingerprint;
   let previousReadFingerprint;
   let terminal;
@@ -285,6 +360,27 @@ async function collectTask({
     return false;
   }
 
+  function blockedResult(blockerText) {
+    return {
+      status: "blocked",
+      terminal,
+      collectedItems,
+      afterCursor,
+      calls,
+      reads,
+      collectionRounds,
+      idlePolls,
+      terminalEmitted: false,
+      blocker: blockerText,
+      lastReadResult,
+      invalidSightings,
+    };
+  }
+
+  function abortBlocker(errorText) {
+    return `${nodeId}: collection aborted after ${MAX_CONSECUTIVE_TOOL_ERRORS} consecutive tool errors; last tool result: ${errorText}`;
+  }
+
   async function ingestSnapshot(snapshot, source, options = {}) {
     if (!snapshot || typeof snapshot !== "object") return;
     const { collectItems = true } = options;
@@ -323,17 +419,26 @@ async function collectTask({
       includeOutputs: true,
       ...(afterCursor !== undefined ? { afterCursor } : {}),
     };
+    if (turnLimit !== undefined) readRequest.turnLimit = turnLimit;
     reads.push(readRequest);
     const rawRead = await readThread(readRequest);
+    lastReadResult = truncateForensic(rawRead);
     const readSnapshot = unwrapToolSnapshot(rawRead);
-    await ingestSnapshot(readSnapshot, "read");
-    previousReadFingerprint = snapshotFingerprint(readSnapshot || {});
-    if (
-      readSnapshot &&
-      typeof readSnapshot === "object" &&
-      readSnapshot.afterCursor !== undefined
-    ) {
-      afterCursor = readSnapshot.afterCursor;
+    const readError = toolErrorText(readSnapshot);
+    if (readError !== null) {
+      // A bare-string or error-envelope result is a tool error, not an empty
+      // snapshot; it must not pass as "no handoff yet" (Lisbon v5).
+      consecutiveToolErrors += 1;
+      if (consecutiveToolErrors >= MAX_CONSECUTIVE_TOOL_ERRORS) {
+        return blockedResult(abortBlocker(readError));
+      }
+    } else {
+      consecutiveToolErrors = 0;
+      await ingestSnapshot(readSnapshot, "read");
+      previousReadFingerprint = snapshotFingerprint(readSnapshot || {});
+      if (readSnapshot.afterCursor !== undefined) {
+        afterCursor = readSnapshot.afterCursor;
+      }
     }
     if (terminal) {
       return {
@@ -365,6 +470,21 @@ async function collectTask({
 
     const rawWait = await waitThreads(request);
     const snapshot = unwrapToolSnapshot(rawWait);
+    const waitError = toolErrorText(snapshot);
+    if (waitError !== null) {
+      // An errored wait is not a snapshot: no fingerprint, no round credit.
+      consecutiveToolErrors += 1;
+      if (consecutiveToolErrors >= MAX_CONSECUTIVE_TOOL_ERRORS) {
+        return blockedResult(abortBlocker(waitError));
+      }
+      idlePolls += 1;
+      await delay();
+      continue;
+    }
+    if (typeof readThread !== "function") {
+      // Wait is the only stream; a clean wait resets the allowance.
+      consecutiveToolErrors = 0;
+    }
     const nextCursor = snapshot && snapshot.afterCursor;
     const cursorAdvanced =
       nextCursor !== undefined && nextCursor !== afterCursor;
@@ -392,23 +512,36 @@ async function collectTask({
         includeOutputs: true,
       };
       if (afterCursor !== undefined) readRequest.afterCursor = afterCursor;
+      if (turnLimit !== undefined) readRequest.turnLimit = turnLimit;
       reads.push(readRequest);
       const rawRead = await readThread(readRequest);
+      lastReadResult = truncateForensic(rawRead);
       const readSnapshot = unwrapToolSnapshot(rawRead);
-      readCursor =
-        readSnapshot && typeof readSnapshot === "object"
-          ? readSnapshot.afterCursor
-          : undefined;
-      const readFingerprint = snapshotFingerprint(readSnapshot || {});
-      const collectItems =
-        previousReadFingerprint === undefined ||
-        readFingerprint !== previousReadFingerprint;
-      const before = terminal;
-      await ingestSnapshot(readSnapshot, "read", { collectItems });
-      previousReadFingerprint = readFingerprint;
-      if (!before && terminal) {
-        // Found via read even if wait looked idle — not an idle burn.
-        idlePolls = 0;
+      const readError = toolErrorText(readSnapshot);
+      if (readError !== null) {
+        // An errored read is not an empty snapshot; never burn the window
+        // on it. Abort after the bounded allowance instead of spinning.
+        consecutiveToolErrors += 1;
+        if (consecutiveToolErrors >= MAX_CONSECUTIVE_TOOL_ERRORS) {
+          return blockedResult(abortBlocker(readError));
+        }
+      } else {
+        consecutiveToolErrors = 0;
+        readCursor =
+          readSnapshot && typeof readSnapshot === "object"
+            ? readSnapshot.afterCursor
+            : undefined;
+        const readFingerprint = snapshotFingerprint(readSnapshot || {});
+        const collectItems =
+          previousReadFingerprint === undefined ||
+          readFingerprint !== previousReadFingerprint;
+        const before = terminal;
+        await ingestSnapshot(readSnapshot, "read", { collectItems });
+        previousReadFingerprint = readFingerprint;
+        if (!before && terminal) {
+          // Found via read even if wait looked idle — not an idle burn.
+          idlePolls = 0;
+        }
       }
     }
 
@@ -423,11 +556,15 @@ async function collectTask({
     }
   }
 
-  const status = terminal
-    ? terminal.status === "complete"
-      ? "passed"
-      : terminal.status
-    : "blocked";
+  if (!terminal) {
+    // Forensic floor: a window expiry embeds the last raw read result so the
+    // next silent failure is diagnosable from the blocked terminal alone.
+    return blockedResult(
+      `${nodeId}: collection window expired without terminal JSON`,
+    );
+  }
+
+  const status = terminal.status === "complete" ? "passed" : terminal.status;
 
   return {
     status,
@@ -445,12 +582,17 @@ async function collectTask({
 
 module.exports = {
   MAX_OUTPUT_CHARS_PER_ITEM,
+  MAX_TURN_LIMIT,
+  MAX_CONSECUTIVE_TOOL_ERRORS,
+  FORENSIC_RESULT_CAP,
   collectTask,
   isValidTerminalHandoff,
   findHandoffInValue,
   findExactThread,
   preflightWorktreeTarget,
   normalizeToolResult,
+  toolErrorText,
+  truncateForensic,
   aggregateStartFailure,
   canonicalUrlForComparison,
 };

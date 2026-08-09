@@ -1,9 +1,12 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 const {
   MAX_OUTPUT_CHARS_PER_ITEM,
+  FORENSIC_RESULT_CAP,
   collectTask,
   normalizeToolResult,
   aggregateStartFailure,
@@ -753,4 +756,261 @@ test("accepts an explicit failed worker handoff even when schema validation woul
   assert.deepEqual(result.terminal, failedHandoff);
   assert.equal(result.terminalEmitted, true);
   assert.deepEqual(result.invalidSightings, []);
+});
+
+// ── Collection read bounds + error-envelope fail-fast (Lisbon v5/v3) ────────
+// ChatGPT Desktop rejects read_thread turnLimit > 10 (openai/codex#30058).
+// The rejection is a BARE STRING tool result, not an error object. Lisbon v5
+// generated turnLimit:20, treated the string as "no handoff yet", and burned
+// three 35-minute collection windows while three complete 18KB handoffs sat
+// unread (v3 blocked the same way). Forensic replays live in the lab repo:
+// results/v5-pull/forensic-read-n2a-limit20.json and -limit100.json.
+
+const DESKTOP_TURN_LIMIT_REJECTION =
+  "read_thread received invalid arguments: turnLimit: Too big: expected number to be <=10.";
+
+test("rejects a turn window above the Desktop cap", async () => {
+  await assert.rejects(
+    collectTask({
+      nodeId: "W1",
+      threadId: "thread-1",
+      waitThreads: async () => ({ items: [] }),
+      turnLimit: 20,
+    }),
+    /turnLimit exceeds 10/,
+  );
+});
+
+test("bare-string read rejection aborts with a named blocker instead of burning the window", async () => {
+  let waits = 0;
+  const result = await collectTask({
+    nodeId: "N2A",
+    threadId: "thread-n2a",
+    maxCollectionRounds: 8,
+    maxIdlePolls: 8,
+    waitThreads: async () => {
+      waits += 1;
+      return { afterCursor: `c${waits}`, items: [{ id: waits }] };
+    },
+    readThread: async () => DESKTOP_TURN_LIMIT_REJECTION,
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.terminalEmitted, false);
+  assert.match(result.blocker, /aborted after 3 consecutive tool errors/);
+  assert.ok(
+    result.blocker.includes(DESKTOP_TURN_LIMIT_REJECTION),
+    "blocker embeds the verbatim tool error",
+  );
+  assert.equal(result.reads.length, 3, "bounded allowance: initial read + two loop reads");
+  assert.equal(result.calls.length, 2, "window is not burned to exhaustion");
+  assert.ok(
+    result.lastReadResult.includes("turnLimit: Too big"),
+    "forensic floor keeps the last raw read",
+  );
+});
+
+test("error-envelope object reads do not count as snapshots", async () => {
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    maxCollectionRounds: 6,
+    maxIdlePolls: 6,
+    waitThreads: async () => ({ items: [] }),
+    readThread: async () => ({
+      isError: true,
+      message: "read_thread failed: transient backend error",
+    }),
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.match(result.blocker, /consecutive tool errors/);
+  assert.match(result.blocker, /transient backend error/);
+});
+
+test("a transient read error clears when a clean read follows within the allowance", async () => {
+  const handoff = { node_id: "W1", status: "complete", candidates: [] };
+  let reads = 0;
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    maxCollectionRounds: 6,
+    maxIdlePolls: 6,
+    waitThreads: sequenceWaiter([
+      { afterCursor: "c1", items: [] },
+      { afterCursor: "c2", items: [] },
+      { afterCursor: "c3", items: [] },
+    ]),
+    readThread: async () => {
+      reads += 1;
+      if (reads <= 2) return DESKTOP_TURN_LIMIT_REJECTION;
+      return { turns: [{ items: [{ content: handoff }] }] };
+    },
+  });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.terminal.node_id, "W1");
+  assert.equal(result.blocker, undefined);
+});
+
+test("handoff is on the newest page of a LAST-N windowed read (no pagination needed)", async () => {
+  // codex-rs thread/turns/list returns the NEWEST turns first
+  // (SortDirection::Desc, reverse + truncate in thread_processor.rs; its
+  // tests assert limit 2 descending returns ["third", "second"]). A worker's
+  // final handoff is therefore on page 0 of a fresh bounded read even when
+  // the thread history is deeper than the window.
+  const handoff = {
+    node_id: "N2A",
+    status: "complete",
+    candidates: [{ id: "N2A-01" }],
+  };
+  const fullHistory = Array.from({ length: 32 }, (_, i) => ({
+    items: [{ type: "message", text: `turn ${i + 1}` }],
+  }));
+  fullHistory.push({
+    items: [{ type: "message", text: JSON.stringify(handoff) }],
+  });
+  const newestFirstWindow = fullHistory.slice(-10).reverse();
+  const result = await collectTask({
+    nodeId: "N2A",
+    threadId: "thread-n2a",
+    turnLimit: 10,
+    waitThreads: async () => {
+      throw new Error("wait must not run when the newest page already has the handoff");
+    },
+    readThread: async (request) => {
+      assert.ok(request.turnLimit <= 10, "read request stays within the Desktop cap");
+      return { turns: newestFirstWindow };
+    },
+  });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.terminal.node_id, "N2A");
+  assert.equal(result.reads.length, 1, "newest page suffices; no cursor paging");
+  assert.deepEqual(result.calls, []);
+  assert.equal(result.reads[0].turnLimit, 10);
+});
+
+test("window expiry embeds the last raw read result (forensic floor)", async () => {
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    maxIdlePolls: 2,
+    waitThreads: async () => ({ items: [] }),
+    readThread: async () => ({ items: [], status: "active" }),
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.terminalEmitted, false);
+  assert.match(result.blocker, /collection window expired without terminal JSON/);
+  assert.ok(
+    result.lastReadResult.includes('"status":"active"'),
+    "blocked terminal keeps the last raw read",
+  );
+});
+
+test("forensic floor truncates the raw read to the named cap", async () => {
+  const oversized = "x".repeat(FORENSIC_RESULT_CAP * 3);
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    maxCollectionRounds: 6,
+    maxIdlePolls: 6,
+    waitThreads: async () => ({ items: [] }),
+    readThread: async () => oversized, // bare string: also a tool error
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.match(result.blocker, /consecutive tool errors/);
+  assert.ok(result.lastReadResult.length < oversized.length);
+  assert.ok(result.lastReadResult.startsWith("x".repeat(64)));
+  assert.match(result.lastReadResult, /truncated \d+ chars/);
+});
+
+test("skill docs bound the turn window and carry the clipped-window anchor", () => {
+  const root = path.join(__dirname, "..");
+  const anchor = "a clipped window is not proof of absence";
+  const surfaces = [
+    path.join(root, "SKILL.md"),
+    path.join(root, "references", "task-lifecycle.md"),
+    path.join(root, "references", "code-mode-script-patterns.md"),
+  ];
+  for (const file of surfaces) {
+    const text = fs.readFileSync(file, "utf8");
+    assert.ok(
+      text.includes(anchor),
+      `${path.basename(file)} is missing the anchor phrase`,
+    );
+  }
+  // No sample anywhere in the skill bundle may request more than 10 turns.
+  const markdownFiles = [
+    path.join(root, "SKILL.md"),
+    ...fs
+      .readdirSync(path.join(root, "references"))
+      .filter((name) => name.endsWith(".md"))
+      .map((name) => path.join(root, "references", name)),
+  ];
+  for (const file of markdownFiles) {
+    const text = fs.readFileSync(file, "utf8");
+    for (const match of text.matchAll(/turnLimit\s*[:=]\s*(\d+)/g)) {
+      assert.ok(
+        Number(match[1]) <= 10,
+        `${path.basename(file)} requests turnLimit ${match[1]} > 10`,
+      );
+    }
+  }
+});
+
+test("a blocked abort carries blocker, lastReadResult, and invalidSightings together (#18 composition)", async () => {
+  // Union invariant: #18's blocked path reports invalidSightings; #21's
+  // reports blocker + lastReadResult. One blocked exit must carry all three.
+  const stale = { node_id: "W1", status: "complete", candidates: [] };
+  let waits = 0;
+  let reads = 0;
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    maxCollectionRounds: 8,
+    maxIdlePolls: 8,
+    validateHandoff: () => ["fewer than 5 candidates"],
+    waitThreads: async () => {
+      waits += 1;
+      return { afterCursor: `c${waits}`, items: [] };
+    },
+    readThread: async () => {
+      reads += 1;
+      if (reads === 1) {
+        return { turns: [{ items: [{ content: stale }] }] };
+      }
+      return DESKTOP_TURN_LIMIT_REJECTION;
+    },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.terminalEmitted, false);
+  assert.match(result.blocker, /aborted after 3 consecutive tool errors/);
+  assert.ok(result.lastReadResult.includes("turnLimit: Too big"));
+  assert.equal(result.invalidSightings.length, 1);
+  assert.deepEqual(result.invalidSightings[0].errors, [
+    "fewer than 5 candidates",
+  ]);
+});
+
+test("a non-fatal error field beside real turns is a snapshot, not a tool error", async () => {
+  // Prefer the payload: {error, turns:[…handoff…]} must be collected, not
+  // classified as a tool error and discarded (PR #21 review finding 1).
+  const handoff = { node_id: "W1", status: "complete", candidates: [] };
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    waitThreads: async () => ({ items: [] }),
+    readThread: async () => ({
+      error: "one turn failed to render",
+      turns: [{ items: [{ content: handoff }] }],
+    }),
+  });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.terminal.node_id, "W1");
+  assert.equal(result.blocker, undefined);
 });

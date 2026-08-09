@@ -258,6 +258,50 @@ For each collection round:
 
 Do not assume output is one text field. Do not treat an unchanged wait snapshot as failure.
 
+### Collection read bounds and error envelopes
+
+**Turn window.** Task reads return a bounded window of the newest turns first
+(LAST-N). The open-source `thread/turns/list` handler sorts newest-first by
+default and truncates to the requested limit (codex-rs `thread_processor.rs`;
+its tests assert that `limit: 2` descending returns `["third", "second"]`).
+The latest handoff is therefore on the first page of a fresh read. Page with
+the returned cursor only when older history is needed — never to find the
+newest turn.
+
+**Turn limit.** Omit `turnLimit` from task-read calls, or keep it at or below
+10. ChatGPT Desktop rejects `turnLimit` above 10 (openai/codex#30058);
+observed verbatim on the Lisbon v5 forensic replay:
+
+```
+read_thread received invalid arguments: turnLimit: Too big: expected number to be <=10.
+```
+
+The rejection arrives as a **bare string tool result**, not a thrown error or
+an error object.
+
+**Clipped windows.** Reads may return a clipped or windowed view of the
+thread; a clipped window is not proof of absence. A short or clipped window
+means keep polling within the collection budget (and page by cursor when
+history depth is needed), never conclude the handoff is missing.
+
+**Error envelopes.** Shape-check every read and wait result before use. A
+top-level string result, or an `error`/`isError` indicator or message-only
+body with no `turns`/`items`/`terminal` payload, is a tool error, not an empty snapshot
+— it must never be treated as "no handoff yet". A result that carries real
+`turns`/`items`/`terminal` is a snapshot even when a non-fatal error field
+rides along: prefer the payload. Allow at most 3 consecutive
+tool errors per handle (a clean read resets the count), then abort that
+handle's collection with a named blocker embedding the verbatim error string.
+A persistently erroring wait short-circuits that round's read, so the abort
+blocker then names the wait error — bounded and pointing at the right tool.
+Never spin a collection window on errored reads: Lisbon v5 burned three
+35-minute windows on a rejected read argument while three complete handoffs
+sat unread; Lisbon v3 blocked the same way.
+
+**Forensic floor.** A collection abort or window expiry must embed the last
+raw read result for that handle, truncated to a named cap, in the blocked
+terminal. A blocked collection without its last raw read cannot be diagnosed.
+
 Use a cursor-aware bounded collector rather than repeating the same read.
 When `waitThreads` comes from `resolveTool`, every call returns
 `{ value, raw }` — read fields from the parsed `value`, not the envelope:
@@ -265,9 +309,13 @@ When `waitThreads` comes from `resolveTool`, every call returns
 ```javascript
 const MAX_OUTPUT_CHARS_PER_ITEM = 20000;
 const MAX_IDLE_POLLS = 4;
+const MAX_CONSECUTIVE_TOOL_ERRORS = 3;
+const FORENSIC_RESULT_CAP = 2000;
 let afterCursor;
 let collectionRounds = 0;
 let idlePolls = 0;
+let consecutiveToolErrors = 0;
+let lastReadResult;
 let previousSnapshotFingerprint;
 let handoff;
 
@@ -278,7 +326,51 @@ function snapshotFingerprint(snapshot) {
   });
 }
 
-// Read first: worker may already be complete.
+// A tool rejection can arrive as a bare string result, not a thrown error
+// (observed on ChatGPT Desktop: "read_thread received invalid arguments:
+// turnLimit: Too big: expected number to be <=10."). Classify every wait and
+// read result before use; an error is never a snapshot.
+function toolErrorText(value) {
+  if (typeof value === "string") return value;
+  if (value == null) return "empty tool result";
+  if (typeof value !== "object") return String(value);
+  if (
+    value.turns !== undefined ||
+    value.items !== undefined ||
+    value.terminal !== undefined
+  ) {
+    // Prefer the payload: a snapshot carrying real turns/items/terminal is
+    // a snapshot even when a non-fatal error field rides along.
+    return null;
+  }
+  if (value.isError === true || value.error != null) {
+    if (typeof value.error === "string") return value.error;
+    if (typeof value.message === "string") return value.message;
+    return JSON.stringify(value.error ?? value);
+  }
+  if (typeof value.message === "string") return value.message;
+  return null;
+}
+
+function abortCollection(reason) {
+  throw Object.assign(new Error(`${handle.node_id} ${reason}`), {
+    handle,
+    last_read_result: lastReadResult, // forensic floor
+  });
+}
+
+function trackToolError(errorText) {
+  consecutiveToolErrors += 1;
+  if (consecutiveToolErrors >= MAX_CONSECUTIVE_TOOL_ERRORS) {
+    abortCollection(
+      `collection aborted after ${MAX_CONSECUTIVE_TOOL_ERRORS} consecutive tool errors; last tool result: ${errorText}`,
+    );
+  }
+}
+
+// Read first: worker may already be complete. Omit turnLimit (the Desktop
+// declaration rejects values above 10) — the newest turns come first, so the
+// latest handoff is already on this page.
 {
   const firstRead = await readThread.call({
     threadId: handle.thread_id,
@@ -286,7 +378,10 @@ function snapshotFingerprint(snapshot) {
     includeOutputs: true,
     maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
   });
-  handoff = findHandoffInValue(firstRead.value, handle.node_id);
+  lastReadResult = String(firstRead.raw).slice(0, FORENSIC_RESULT_CAP);
+  const firstReadError = toolErrorText(firstRead.value);
+  if (firstReadError !== null) trackToolError(firstReadError);
+  else handoff = findHandoffInValue(firstRead.value, handle.node_id);
 }
 
 while (
@@ -300,6 +395,13 @@ while (
     maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
   });
   const snapshot = waitResult.value;
+  const waitError = toolErrorText(snapshot);
+  if (waitError !== null) {
+    // An errored wait is not a snapshot: no fingerprint, no round credit.
+    trackToolError(waitError);
+    idlePolls += 1;
+    continue;
+  }
   const nextCursor = snapshot.afterCursor;
   const cursorAdvanced =
     nextCursor !== undefined && nextCursor !== afterCursor;
@@ -324,16 +426,30 @@ while (
     maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
     ...(afterCursor !== undefined ? { afterCursor } : {}),
   });
+  lastReadResult = String(readResult.raw).slice(0, FORENSIC_RESULT_CAP);
+  const readError = toolErrorText(readResult.value);
+  if (readError !== null) {
+    // An errored read is not an empty snapshot; never burn the window on it.
+    trackToolError(readError);
+    continue;
+  }
+  consecutiveToolErrors = 0;
   handoff = findHandoffInValue(readResult.value, handle.node_id);
   if (!handoff && !hasNewData) {
     await new Promise((resolve) => setTimeout(resolve, COLLECTION_DELAY_MS));
   }
 }
+
+if (!handoff) {
+  abortCollection("collection window expired without terminal JSON");
+}
 ```
 
-Adapt the argument names to the active declaration, but preserve both
-properties: carry the cursor forward, deduplicate unchanged snapshots, and
-stay within the declared item limit and an explicit no-progress bound.
+Adapt the argument names to the active declaration, but preserve all of these
+properties: carry the cursor forward, deduplicate unchanged snapshots, stay
+within the declared item limit and an explicit no-progress bound, classify
+error envelopes before use, and preserve the last raw read result for the
+blocked terminal.
 
 Require the repair prompt to demand an explicit post-repair marker in the corrected handoff (for example a `corrected_at` timestamp) and filter recollection on that marker; add cursor or turn-id provenance when the read tool provides it. Never correlate by array index into a returned turn list. A stale pre-repair handoff is not a corrected handoff. Reads may return a clipped window, and a clipped window is not proof of absence — a handoff not yet visible means keep polling within budget under the collection read-bounds contract. Observed: Lisbon dogfood v5 — the repair recollect re-read the thread from the start, found the original pre-repair handoff first, and reinstalled identical data, so the repair stage was a guaranteed no-op.
 
@@ -458,6 +574,11 @@ Before returning a generated graph script, check these cases against the active 
 - a repair recollect ignores the stale pre-repair handoff and accepts only the corrected handoff carrying the required post-repair marker;
 - an invalid handoff sighting mid-window is skipped and a later valid handoff is still collected;
 - the read request stays within the item limit;
+- the read request omits `turnLimit` or bounds it at 10, and a handoff on the
+  newest page is found without paging;
+- an errored or bare-string read result counts toward the bounded tool-error
+  allowance instead of burning the collection window;
+- a blocked collection embeds the last raw read result for diagnosis;
 - an oversized handoff uses an expansion queue or durable artifact;
 - a blocked result preserves every live handle and exact node error;
 - a catch-path terminal preserves `executed_nodes` for the stages that actually ran;
