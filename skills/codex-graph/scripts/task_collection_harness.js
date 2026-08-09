@@ -87,6 +87,17 @@ function findHandoffInValue(value, nodeId, seen = new Set()) {
 }
 
 function unwrapToolSnapshot(raw) {
+  // resolveTool returns { value, raw }. Prefer the inner value; avoid treating
+  // the envelope itself as the wait/read snapshot.
+  if (
+    raw &&
+    typeof raw === "object" &&
+    !Array.isArray(raw) &&
+    Object.prototype.hasOwnProperty.call(raw, "value") &&
+    Object.prototype.hasOwnProperty.call(raw, "raw")
+  ) {
+    return unwrapToolSnapshot(raw.value);
+  }
   const normalized = normalizeToolResult(raw);
   return normalized.value;
 }
@@ -114,6 +125,7 @@ async function collectTask({
   let previousReadFingerprint;
   let terminal;
   const collectedItems = [];
+  const seenItemKeys = new Set();
   const calls = [];
   const reads = [];
 
@@ -127,7 +139,17 @@ async function collectTask({
       findHandoffInValue(snapshot, nodeId);
     if (handoff) terminal = handoff;
     if (collectItems && Array.isArray(snapshot.items)) {
-      collectedItems.push(...snapshot.items);
+      for (const item of snapshot.items) {
+        let key;
+        try {
+          key = JSON.stringify(item);
+        } catch {
+          key = String(item);
+        }
+        if (seenItemKeys.has(key)) continue;
+        seenItemKeys.add(key);
+        collectedItems.push(item);
+      }
     }
     if (source === "wait" || source === "read") {
       /* count handled by caller for budget */

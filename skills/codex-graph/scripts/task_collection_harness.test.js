@@ -264,3 +264,18 @@ test("finds handoff via post-wait read when wait snapshot stays empty", async ()
   assert.equal(result.terminal.status, "complete");
   assert.ok(reads >= 2);
 });
+
+test("unwraps resolveTool envelopes from wait and read", async () => {
+  const handoff = { node_id: "W1", status: "complete", candidates: [] };
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "t1",
+    waitThreads: async () => ({ value: { items: [] }, raw: "{}" }),
+    readThread: async () => ({
+      value: { turns: [{ items: [{ content: handoff }] }] },
+      raw: "{}",
+    }),
+  });
+  assert.equal(result.terminalEmitted, true);
+  assert.equal(result.terminal.node_id, "W1");
+});
