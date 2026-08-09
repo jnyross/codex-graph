@@ -232,8 +232,14 @@ async function collectTask({
     }
 
     previousFingerprint = fingerprint;
+    // Prefer wait progress; only take read's cursor when it advances past the
+    // request cursor. Read often echoes the request afterCursor when there is
+    // no further page, which must not rewind a newer wait cursor.
+    const requestCursor = request.afterCursor;
     if (nextCursor !== undefined) afterCursor = nextCursor;
-    if (readCursor !== undefined) afterCursor = readCursor;
+    if (readCursor !== undefined && readCursor !== requestCursor) {
+      afterCursor = readCursor;
+    }
   }
 
   const status = terminal
