@@ -2,9 +2,11 @@
 
 All notable product releases are documented here.
 
-## Unreleased
+## [0.5.6] - 2026-08-09
 
 - fix: require configured await-call helper names to be standalone targets instead of member/property or identifier-suffix matches, and align the slice-generators testcase with the canonical `N3` integration-node vocabulary
+
+- Fix automatic release changelog promotion (#23)
 
 ## [0.5.5] - 2026-08-09
 
