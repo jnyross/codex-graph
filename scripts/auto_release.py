@@ -14,6 +14,15 @@ from typing import Iterable, Sequence
 
 Version = tuple[int, int, int]
 
+UNRELEASED_HEADING = re.compile(
+    r"^##[ \t]+(?:Unreleased|\[Unreleased\])[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+FENCE_START = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
+SECTION_HEADING = re.compile(r"^##[ \t]+")
+DETAIL_SUFFIX = re.compile(r"[ \t]+—[ \t]+.*$")
+PULL_REQUEST_SUFFIX = re.compile(r"\s+\(#\d+\)$")
+
 
 def parse_version(value: str) -> Version:
     match = re.fullmatch(r"\s*v?(\d+)\.(\d+)\.(\d+)\s*", value)
@@ -71,13 +80,96 @@ def compute_next_version(
     return format_version(candidate)
 
 
+def release_subject_stem(value: str) -> str:
+    """Remove curated detail and a PR suffix for release-note comparison."""
+    without_detail = DETAIL_SUFFIX.sub("", value)
+    return PULL_REQUEST_SUFFIX.sub("", without_detail).strip()
+
+
+def find_next_changelog_section(changelog: str, start: int) -> int:
+    """Find the next level-two heading that is outside a Markdown fence."""
+    fence_char = ""
+    fence_length = 0
+    offset = start
+    for line in changelog[start:].splitlines(keepends=True):
+        text = line.rstrip("\r\n")
+        stripped = text.lstrip(" \t")
+        indentation = len(text) - len(stripped)
+        if fence_char:
+            marker_length = len(stripped) - len(stripped.lstrip(fence_char))
+            if (
+                indentation <= 3
+                and marker_length >= fence_length
+                and not stripped[marker_length:].strip()
+            ):
+                fence_char = ""
+                fence_length = 0
+        else:
+            fence = FENCE_START.match(text)
+            if fence:
+                marker = fence.group(1)
+                fence_char = marker[0]
+                fence_length = len(marker)
+            elif SECTION_HEADING.match(text):
+                return offset
+        offset += len(line)
+    return len(changelog)
+
+
+def promote_unreleased(
+    changelog: str,
+    release_heading: str,
+    subjects: Sequence[str],
+) -> str | None:
+    """Promote Unreleased notes and append generated subjects they do not cover."""
+    heading = UNRELEASED_HEADING.search(changelog)
+    if heading is None:
+        return None
+    section_end = find_next_changelog_section(changelog, heading.end())
+    body = changelog[heading.end() : section_end]
+    entries = "\n".join(f"- {subject}" for subject in subjects)
+    if not body.strip():
+        replacement = f"{release_heading}\n\n{entries}\n\n"
+        return changelog[: heading.start()] + replacement + changelog[section_end:]
+
+    curated_stems = {
+        release_subject_stem(line[2:].strip())
+        for line in body.splitlines()
+        if line.startswith("- ")
+    }
+    unmatched = [
+        subject
+        for subject in subjects
+        if release_subject_stem(subject) not in curated_stems
+    ]
+    if unmatched:
+        if body.endswith("\n\n"):
+            separator = ""
+        elif body.endswith("\n"):
+            separator = "\n"
+        else:
+            separator = "\n\n"
+        generated = "\n".join(f"- {subject}" for subject in unmatched)
+        body += f"{separator}{generated}\n\n"
+    return (
+        changelog[: heading.start()]
+        + release_heading
+        + body
+        + changelog[section_end:]
+    )
+
+
 def rewrite_release_files(
     root: str | Path,
     version: str,
     subjects: Sequence[str],
     release_date: str | None = None,
 ) -> None:
-    """Update VERSION, plugin.json, and prepend a changelog release section."""
+    """Update VERSION, plugin.json, and the changelog release section.
+
+    A populated ``## Unreleased`` section is promoted in place so its curated
+    content is consumed once instead of duplicated by generated commit notes.
+    """
     root = Path(root)
     version_path = root / "VERSION"
     version_text = version_path.read_text()
@@ -96,7 +188,12 @@ def rewrite_release_files(
     changelog = changelog_path.read_text()
     heading_date = release_date or date.today().isoformat()
     entries = "\n".join(f"- {subject}" for subject in subjects)
-    section = f"## [{version}] - {heading_date}\n\n{entries}\n\n"
+    release_heading = f"## [{version}] - {heading_date}"
+    promoted = promote_unreleased(changelog, release_heading, subjects)
+    if promoted is not None:
+        changelog_path.write_text(promoted)
+        return
+    section = f"{release_heading}\n\n{entries}\n\n"
     marker = "\n## ["
     insertion = changelog.find(marker)
     if insertion == -1:
