@@ -130,7 +130,9 @@ For each collection round:
 
 Do not assume output is one text field. Do not treat an unchanged wait snapshot as failure.
 
-Use a cursor-aware bounded collector rather than repeating the same read:
+Use a cursor-aware bounded collector rather than repeating the same read.
+When `waitThreads` comes from `resolveTool`, every call returns
+`{ value, raw }` — read fields from the parsed `value`, not the envelope:
 
 ```javascript
 const MAX_OUTPUT_CHARS_PER_ITEM = 20000;
@@ -151,11 +153,12 @@ while (
   collectionRounds < MAX_COLLECTION_ROUNDS &&
   idlePolls < MAX_IDLE_POLLS
 ) {
-  const snapshot = await waitThreads({
+  const waitResult = await waitThreads({
     threadIds: [handle.thread_id],
     afterCursor,
     maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
   });
+  const snapshot = waitResult.value;
   const nextCursor = snapshot.afterCursor;
   const cursorAdvanced =
     nextCursor !== undefined && nextCursor !== afterCursor;

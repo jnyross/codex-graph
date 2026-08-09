@@ -134,12 +134,36 @@ Do not add `agent_type`, model, or reasoning overrides unless the goal requires 
 
 ## Bounded parallel fan-out
 
-Use `Promise.allSettled` when partial diagnostics are useful, but treat any required worker failure as a blocked stage.
+Use `Promise.allSettled` when partial diagnostics are useful, but treat any required worker failure as a blocked stage. Create each node's handle **before** the tool call and rethrow with that handle attached so aggregate failures can report live work:
 
 ```javascript
+async function startRequiredNode(node, spawnTool) {
+  const handle = {
+    node_id: node.id,
+    run_tag: node.runTag,
+    title: node.title,
+    state: "pending_setup",
+  };
+  try {
+    const start = await spawnTool.call(spawnArgs(spawnTool, node));
+    handle.start_result = start.raw;
+    handle.thread_id = findString(start.value, ["threadId", "thread_id"]);
+    handle.client_thread_id = findString(start.value, [
+      "clientThreadId",
+      "client_thread_id",
+    ]);
+    handle.host_id = findString(start.value, ["hostId", "host_id"]);
+    handle.state = handle.thread_id ? "active" : "pending_setup";
+    return { node, handle, start };
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    throw Object.assign(err, { handle });
+  }
+}
+
 async function spawnRequiredBatch(nodes, spawnTool) {
   const settled = await Promise.allSettled(
-    nodes.map((node) => spawnTool.call(spawnArgs(spawnTool, node)))
+    nodes.map((node) => startRequiredNode(node, spawnTool)),
   );
 
   const failures = settled
@@ -153,10 +177,11 @@ async function spawnRequiredBatch(nodes, spawnTool) {
     );
   }
 
-  return settled.map(({ value }, index) => ({
-    node: nodes[index],
-    spawnResult: value.raw,
-    agentId: findAgentId(value.value),
+  return settled.map(({ value }) => ({
+    node: value.node,
+    handle: value.handle,
+    spawnResult: value.start.raw,
+    agentId: findAgentId(value.start.value),
   }));
 }
 ```
