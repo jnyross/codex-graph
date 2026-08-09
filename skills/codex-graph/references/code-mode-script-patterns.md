@@ -26,7 +26,7 @@ deliverable before wiring its reference into the repeatable graph.
 
 ## Prefer semantic tool resolution over hard-coded namespaces
 
-Tool namespaces and multi-agent versions can differ. Resolve an operation from actual metadata, confirm it is callable, and fail closed when it is absent.
+Tool namespaces and multi-agent versions can differ. Resolve an operation from actual metadata, confirm it is callable, and fail closed when it is absent. Every resolved `call` must return the exact-envelope pair from `normalizeToolResult` so string tool payloads are parsed once at the boundary (see the next section).
 
 ```javascript
 function candidatePropertyNames(name) {
@@ -35,6 +35,15 @@ function candidatePropertyNames(name) {
     name.replace(/[.\-/:]+/g, "_"),
     name.replace(/[.\-/:]+/g, "__"),
   ])];
+}
+
+function normalizeToolResult(raw) {
+  if (typeof raw !== "string") return { value: raw, raw };
+  try {
+    return { value: JSON.parse(raw.trim()), raw };
+  } catch {
+    return { value: raw, raw };
+  }
 }
 
 function resolveTool(operation, { required = true } = {}) {
@@ -54,7 +63,8 @@ function resolveTool(operation, { required = true } = {}) {
         return {
           name: propertyName,
           metadata,
-          call: (args) => tools[propertyName](args),
+          call: async (args) =>
+            normalizeToolResult(await tools[propertyName](args)),
         };
       }
     }
@@ -65,7 +75,8 @@ function resolveTool(operation, { required = true } = {}) {
       return {
         name: propertyName,
         metadata: { name: propertyName, description: "" },
-        call: (args) => tools[propertyName](args),
+        call: async (args) =>
+          normalizeToolResult(await tools[propertyName](args)),
       };
     }
   }
@@ -75,7 +86,32 @@ function resolveTool(operation, { required = true } = {}) {
 }
 ```
 
-Do not rely on this helper alone when the current declaration already provides an exact name and schema. Prefer the exact exposed declaration and use defensive resolution only for namespace portability.
+Do not rely on this helper alone when the current declaration already provides an exact name and schema. Prefer the exact exposed declaration and use defensive resolution only for namespace portability. If you resolve a tool without `resolveTool`, still wrap its `call` with `normalizeToolResult` the same way.
+
+## Normalize tool results at the call boundary
+
+A resolved tool can return its entire payload as a JSON **string** at the
+JavaScript level, not an object (observed for `codex_app__create_thread` on
+ChatGPT Desktop for macOS: `typeof result === "string"`). Any key lookup
+applied to the raw return silently fails, which can wrongly mark every
+successful start as failed.
+
+`resolveTool` above already returns `{ value, raw }` from every `call`. Use
+the parsed value for key lookup and keep the raw payload with the handle —
+no shared mutable state:
+
+```javascript
+// at a start site (createThread came from resolveTool):
+const start = await createThread.call(startArgs);
+handle.start_result = start.raw;
+const threadId = findString(start.value, ["threadId", "thread_id"]);
+```
+
+Parse the whole trimmed string exactly once. Do not apply fragment heuristics
+(fenced-block or `{...}` extraction) to a tool return: those heuristics exist
+for model prose inside structured `items`, and on a tool payload they can
+silently discard parts of a multi-object response. Store the raw return in the
+handle's `start_result` so blocked evidence keeps the unmodified payload.
 
 ## Build arguments from the exposed declaration
 
@@ -98,12 +134,37 @@ Do not add `agent_type`, model, or reasoning overrides unless the goal requires 
 
 ## Bounded parallel fan-out
 
-Use `Promise.allSettled` when partial diagnostics are useful, but treat any required worker failure as a blocked stage.
+Use `Promise.allSettled` when partial diagnostics are useful, but treat any required worker failure as a blocked stage. Create each node's handle **before** the tool call and rethrow with that handle attached so aggregate failures can report live work:
 
 ```javascript
-async function spawnRequiredBatch(nodes, spawnTool) {
+async function startRequiredNode(node, spawnTool, projectId) {
+  const handle = {
+    node_id: node.id,
+    project_id: projectId,
+    run_tag: node.runTag,
+    title: node.title,
+    state: "pending_setup",
+  };
+  try {
+    const start = await spawnTool.call(spawnArgs(spawnTool, node));
+    handle.start_result = start.raw;
+    handle.thread_id = findString(start.value, ["threadId", "thread_id"]);
+    handle.client_thread_id = findString(start.value, [
+      "clientThreadId",
+      "client_thread_id",
+    ]);
+    handle.host_id = findString(start.value, ["hostId", "host_id"]);
+    handle.state = handle.thread_id ? "active" : "pending_setup";
+    return { node, handle, start };
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    throw Object.assign(err, { handle });
+  }
+}
+
+async function spawnRequiredBatch(nodes, spawnTool, projectId) {
   const settled = await Promise.allSettled(
-    nodes.map((node) => spawnTool.call(spawnArgs(spawnTool, node)))
+    nodes.map((node) => startRequiredNode(node, spawnTool, projectId)),
   );
 
   const failures = settled
@@ -111,13 +172,17 @@ async function spawnRequiredBatch(nodes, spawnTool) {
     .filter(({ result }) => result.status === "rejected");
 
   if (failures.length > 0) {
-    throw new Error(`Required workers failed to spawn: ${failures.map(({ node }) => node.id).join(", ")}`);
+    throw Object.assign(
+      new Error(`Required workers failed to spawn: ${failures.map(({ node }) => node.id).join(", ")}`),
+      { handles: failures.map(({ result }) => result.reason?.handle).filter(Boolean) },
+    );
   }
 
-  return settled.map(({ value }, index) => ({
-    node: nodes[index],
-    spawnResult: value,
-    agentId: findAgentId(value),
+  return settled.map(({ value }) => ({
+    node: value.node,
+    handle: value.handle,
+    spawnResult: value.start.raw,
+    agentId: findAgentId(value.start.value),
   }));
 }
 ```
@@ -132,9 +197,16 @@ When the script creates visible Codex tasks, read `task-lifecycle.md` and use it
 
 ## Preserve setup handles and terminal handoffs
 
-A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the exact project ID and unique run tag. The tag normally appears in `title`, but can appear in `summary` while project setup is loading. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
+A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the unique run tag, and the exact project ID when one exists. The tag normally appears in `title`, but can appear in `summary` while project setup is loading. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
 
 Do not reduce a task handle to one convenience ID while setup or execution is live. A blocked terminal report must include each node ID, ready or pending ID, project ID, host ID, title, state, and the exact start or collection error.
+
+When several required starts are aggregated into one error, attach each
+rejected node's handle to the aggregate error
+(`Object.assign(new Error(...), { handles })`) and spread `error.handles` into
+the blocked result's live-handle list. A start rejection whose task was already
+created is still a live handle; dropping it orphans a running task and makes
+the blocked report unrecoverable.
 
 ## Read structured task output
 
@@ -245,6 +317,27 @@ Revalidation runs only the affected lanes and any global check invalidated by
 the repair.
 
 Each validator must cite a declared acceptance criterion. It cannot require a larger sample or new coverage domain after the run starts. The root gate rejects repair instructions that contradict the fixed scope or cannot be completed within the one declared repair stage.
+
+When a validator compares URLs or other link fields across artifacts, decode
+HTML entities before comparing so markup-escaping differences do not consume
+the single repair allowance. RSS and HTML sources routinely deliver `&amp;`,
+`&#38;`, or `&#x26;` where the canonical URL holds `&`; these are the same
+link, not a provenance defect. Compare canonical forms:
+
+```javascript
+function canonicalUrlForComparison(url) {
+  if (typeof url !== "string") return url;
+  return url
+    .replace(/&amp;/gi, "&")
+    .replace(/&#0*38;/g, "&")
+    .replace(/&#x0*26;/gi, "&")
+    .trim();
+}
+```
+
+Reserve the repair stage for substantive defects; instruct validators to apply
+this normalization in their prompts when link fidelity is an acceptance
+criterion.
 
 ## Exactly one repair, unrolled
 

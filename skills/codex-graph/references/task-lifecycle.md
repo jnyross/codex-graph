@@ -22,6 +22,16 @@ A task-creation call can return:
 - a pending `clientThreadId` while the task is being prepared;
 - a real tool error.
 
+At the JavaScript level the entire result may arrive as a JSON **string**
+(observed for `codex_app__create_thread` on ChatGPT Desktop for macOS). A key
+lookup applied to the raw string silently returns nothing and wrongly converts
+every successful start into a start failure. Normalize every tool result at
+the call boundary with the exact-envelope parser from
+`code-mode-script-patterns.md` ("Normalize tool results at the call
+boundary"): parse the whole trimmed string exactly once, never apply fragment
+extraction heuristics to a tool return, use the parsed value for key lookup,
+and keep the raw payload in the handle's `start_result`.
+
 A pending setup handle is success in progress. Preserve it. Use a unique run tag and task title for every node. Store this handle shape:
 
 ```javascript
@@ -38,7 +48,16 @@ A pending setup handle is success in progress. Preserve it. Use a unique run tag
 }
 ```
 
-If `threadId` is absent and `clientThreadId` is present, poll the task list with a named maximum and short delay. Match the exact project ID and unique run tag. Prefer `title`; while a project task is loading, Codex can temporarily put the requested title in `summary`. Accept `summary` only when it contains the same exact unique run tag and the project ID also matches. Copy the ready thread and host IDs into the existing handle. Do not create a replacement task while the original setup can still resolve.
+If `threadId` is absent and `clientThreadId` is present, resolving the pending
+setup is **required**, not optional: poll the task list with a named maximum and
+short delay. This applies to projectless targets too — match the unique run tag
+(and the exact project ID when one exists). Never fail a start closed while its
+pending setup can still resolve within the named bound, and never create a
+replacement task while the original setup can still resolve. Prefer `title`;
+while a project task is loading, Codex can temporarily put the
+requested title in `summary`. Accept it only when it contains the same exact unique run
+tag, and the project ID also matches when one exists. Copy the ready thread and host IDs into
+the existing handle.
 
 ```javascript
 const START_RESOLVE_ATTEMPTS = 30;
@@ -53,7 +72,10 @@ function findExactThread(value, projectId, runTag) {
     }
   }
   if (!value || typeof value !== "object") return null;
-  const sameProject = value.projectId === projectId;
+  // Projectless handles have no projectId; match the unique run tag alone.
+  // When a project is bound, require an exact projectId match as well.
+  const projectRequired = projectId != null && projectId !== "";
+  const sameProject = !projectRequired || value.projectId === projectId;
   const title = typeof value.title === "string" ? value.title : "";
   const summary = typeof value.summary === "string" ? value.summary : "";
   if (sameProject && (title.includes(runTag) || summary.includes(runTag))) return value;
@@ -108,7 +130,9 @@ For each collection round:
 
 Do not assume output is one text field. Do not treat an unchanged wait snapshot as failure.
 
-Use a cursor-aware bounded collector rather than repeating the same read:
+Use a cursor-aware bounded collector rather than repeating the same read.
+When `waitThreads` comes from `resolveTool`, every call returns
+`{ value, raw }` — read fields from the parsed `value`, not the envelope:
 
 ```javascript
 const MAX_OUTPUT_CHARS_PER_ITEM = 20000;
@@ -129,11 +153,12 @@ while (
   collectionRounds < MAX_COLLECTION_ROUNDS &&
   idlePolls < MAX_IDLE_POLLS
 ) {
-  const snapshot = await waitThreads({
+  const waitResult = await waitThreads({
     threadIds: [handle.thread_id],
     afterCursor,
     maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
   });
+  const snapshot = waitResult.value;
   const nextCursor = snapshot.afterCursor;
   const cursorAdvanced =
     nextCursor !== undefined && nextCursor !== afterCursor;
@@ -186,6 +211,13 @@ application-level budget.
 ## 5. Report exact failures and live state
 
 Use `Promise.allSettled` for required parallel starts and collections. Report each rejected node with its exact reason. A generic list of node IDs is not enough.
+
+When several required starts fail together, build the aggregate error with
+`Object.assign(new Error(...), { handles })`, carrying every rejected node's
+handle, and spread `error.handles` into the blocked result's live-handle list.
+A rejected start whose task was already created is still a live handle;
+dropping it orphans a running task and reports `live_handles: []` while work
+continues unobserved.
 
 On any blocked terminal result, include:
 
@@ -246,6 +278,12 @@ Before returning a generated graph script, check these cases against the active 
 
 - task creation returns a ready `threadId`;
 - task creation returns only `clientThreadId` and later resolves;
+- task creation returns the whole result as a JSON string and the script
+  normalizes it before key lookup;
+- an aggregate start failure preserves each rejected node's handle in the
+  blocked result;
+- a projectless pending setup resolves from a list response by unique run tag
+  alone, reuses the existing handle, and does not create a replacement task;
 - the pending task carries its unique run tag in `summary` before `title` is ready;
 - a wait call times out while the task remains active;
 - a wait call returns immediately and the fallback delay protects the wall-clock budget;

@@ -9,6 +9,32 @@ function snapshotFingerprint(snapshot) {
   });
 }
 
+function normalizeToolResult(raw) {
+  if (typeof raw !== "string") return { value: raw, raw };
+  try {
+    return { value: JSON.parse(raw.trim()), raw };
+  } catch {
+    return { value: raw, raw };
+  }
+}
+
+function aggregateStartFailure(message, settledStarts) {
+  const handles = settledStarts
+    .filter((entry) => entry.status === "rejected")
+    .map((entry) => entry.reason && entry.reason.handle)
+    .filter(Boolean);
+  return Object.assign(new Error(message), { handles });
+}
+
+function canonicalUrlForComparison(url) {
+  if (typeof url !== "string") return url;
+  return url
+    .replace(/&amp;/gi, "&")
+    .replace(/&#0*38;/g, "&")
+    .replace(/&#x0*26;/gi, "&")
+    .trim();
+}
+
 function isValidTerminalHandoff(value, nodeId) {
   return (
     value &&
@@ -95,4 +121,7 @@ module.exports = {
   MAX_OUTPUT_CHARS_PER_ITEM,
   collectTask,
   isValidTerminalHandoff,
+  normalizeToolResult,
+  aggregateStartFailure,
+  canonicalUrlForComparison,
 };
