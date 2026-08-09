@@ -122,6 +122,75 @@ class AutoReleaseTests(unittest.TestCase):
             self.assertEqual(changelog.count("fix: one"), 1)
             self.assertEqual(changelog.count("feat: unrelated (#10)"), 1)
 
+    def test_curated_pr_suffix_before_details_suppresses_generated_subject(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_release_fixture(
+                root,
+                "# Changelog\n\n## Unreleased\n\n"
+                "- fix: one (#9) — curated details\n\n"
+                "## [0.2.0] - 2026-01-01\n\n- Old\n",
+            )
+            rewrite_release_files(root, "0.2.1", ["fix: one (#9)"], "2026-02-03")
+            changelog = (root / "CHANGELOG.md").read_text()
+            self.assertIn(
+                "## [0.2.1] - 2026-02-03\n\n"
+                "- fix: one (#9) — curated details\n\n"
+                "## [0.2.0]",
+                changelog,
+            )
+            self.assertEqual(changelog.count("fix: one (#9)"), 1)
+
+    def test_fenced_heading_does_not_end_unreleased_section(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            curated_body = (
+                "\n\n```markdown\n"
+                "## literal heading\n"
+                "```\n\n"
+                "- fix: one — curated details\n\n"
+            )
+            write_release_fixture(
+                root,
+                "# Changelog\n\n## Unreleased"
+                + curated_body
+                + "## [0.2.0] - 2026-01-01\n\n- Old\n",
+            )
+            rewrite_release_files(
+                root,
+                "0.2.1",
+                ["fix: one (#9)", "feat: unrelated (#10)"],
+                "2026-02-03",
+            )
+            changelog = (root / "CHANGELOG.md").read_text()
+            self.assertIn(
+                "## [0.2.1] - 2026-02-03"
+                + curated_body
+                + "- feat: unrelated (#10)\n\n"
+                "## [0.2.0]",
+                changelog,
+            )
+            self.assertEqual(changelog.count("fix: one"), 1)
+            self.assertEqual(changelog.count("feat: unrelated (#10)"), 1)
+
+    def test_malformed_bracketed_unreleased_heading_is_not_promoted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_release_fixture(
+                root,
+                "# Changelog\n\n## [Unreleased\n\n- malformed\n\n"
+                "## [0.2.0] - 2026-01-01\n\n- Old\n",
+            )
+            rewrite_release_files(root, "0.2.1", ["fix: generated (#11)"], "2026-02-03")
+            changelog = (root / "CHANGELOG.md").read_text()
+            self.assertIn("## [Unreleased\n\n- malformed", changelog)
+            self.assertIn(
+                "## [0.2.1] - 2026-02-03\n\n"
+                "- fix: generated (#11)\n\n"
+                "## [Unreleased",
+                changelog,
+            )
+
     def test_bracketed_unreleased_heading_and_exact_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

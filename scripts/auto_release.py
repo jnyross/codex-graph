@@ -15,9 +15,12 @@ from typing import Iterable, Sequence
 Version = tuple[int, int, int]
 
 UNRELEASED_HEADING = re.compile(
-    r"^##[ \t]+\[?Unreleased\]?[ \t]*$", re.IGNORECASE | re.MULTILINE
+    r"^##[ \t]+(?:Unreleased|\[Unreleased\])[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
 )
-
+FENCE_START = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
+SECTION_HEADING = re.compile(r"^##[ \t]+")
+DETAIL_SUFFIX = re.compile(r"[ \t]+—[ \t]+.*$")
 PULL_REQUEST_SUFFIX = re.compile(r"\s+\(#\d+\)$")
 
 
@@ -77,6 +80,42 @@ def compute_next_version(
     return format_version(candidate)
 
 
+def release_subject_stem(value: str) -> str:
+    """Remove curated detail and a PR suffix for release-note comparison."""
+    without_detail = DETAIL_SUFFIX.sub("", value)
+    return PULL_REQUEST_SUFFIX.sub("", without_detail).strip()
+
+
+def find_next_changelog_section(changelog: str, start: int) -> int:
+    """Find the next level-two heading that is outside a Markdown fence."""
+    fence_char = ""
+    fence_length = 0
+    offset = start
+    for line in changelog[start:].splitlines(keepends=True):
+        text = line.rstrip("\r\n")
+        stripped = text.lstrip(" \t")
+        indentation = len(text) - len(stripped)
+        if fence_char:
+            marker_length = len(stripped) - len(stripped.lstrip(fence_char))
+            if (
+                indentation <= 3
+                and marker_length >= fence_length
+                and not stripped[marker_length:].strip()
+            ):
+                fence_char = ""
+                fence_length = 0
+        else:
+            fence = FENCE_START.match(text)
+            if fence:
+                marker = fence.group(1)
+                fence_char = marker[0]
+                fence_length = len(marker)
+            elif SECTION_HEADING.match(text):
+                return offset
+        offset += len(line)
+    return len(changelog)
+
+
 def promote_unreleased(
     changelog: str,
     release_heading: str,
@@ -86,32 +125,23 @@ def promote_unreleased(
     heading = UNRELEASED_HEADING.search(changelog)
     if heading is None:
         return None
-    next_heading = re.search(r"^##\s+", changelog[heading.end() :], re.MULTILINE)
-    section_end = (
-        heading.end() + next_heading.start()
-        if next_heading is not None
-        else len(changelog)
-    )
+    section_end = find_next_changelog_section(changelog, heading.end())
     body = changelog[heading.end() : section_end]
     entries = "\n".join(f"- {subject}" for subject in subjects)
     if not body.strip():
         replacement = f"{release_heading}\n\n{entries}\n\n"
         return changelog[: heading.start()] + replacement + changelog[section_end:]
 
-    curated_entries = [
-        line[2:].strip() for line in body.splitlines() if line.startswith("- ")
+    curated_stems = {
+        release_subject_stem(line[2:].strip())
+        for line in body.splitlines()
+        if line.startswith("- ")
+    }
+    unmatched = [
+        subject
+        for subject in subjects
+        if release_subject_stem(subject) not in curated_stems
     ]
-    unmatched = []
-    for subject in subjects:
-        base = PULL_REQUEST_SUFFIX.sub("", subject).strip()
-        represented = any(
-            entry == subject
-            or entry == base
-            or entry.startswith(f"{base} — ")
-            for entry in curated_entries
-        )
-        if not represented:
-            unmatched.append(subject)
     if unmatched:
         if body.endswith("\n\n"):
             separator = ""
