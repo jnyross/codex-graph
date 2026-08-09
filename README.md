@@ -56,8 +56,16 @@ python3 skills/codex-graph/scripts/graph_coherence.py skills/codex-graph/referen
 python3 skills/codex-graph/scripts/graph_coherence.py < diagram.mmd
 ```
 
-On Windows, run the validator, graph-coherence linter, and task-collection
-regression suite from Codex Desktop's terminal:
+On macOS and Linux, run the full regression suite (validator, graph-coherence
+selfcheck, task-collection suite, and release automation tests) with:
+
+```bash
+./scripts/run_regressions.sh
+```
+
+On Windows, run the full regression suite (validator, graph-coherence
+selfcheck, task-collection suite, and release automation tests) from Codex
+Desktop's terminal:
 
 ```powershell
 .\scripts\run_windows_regressions.ps1
