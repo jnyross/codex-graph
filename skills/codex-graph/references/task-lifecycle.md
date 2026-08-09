@@ -54,6 +54,7 @@ A pending setup handle is success in progress. Preserve it. Use a unique run tag
   client_thread_id,
   host_id,
   project_id,
+  environment: { type: "local" | "worktree" },
   run_tag,
   title,
   state: "pending_setup | active | complete | failed",
@@ -84,8 +85,9 @@ constants in the script.
 
 ```javascript
 // Chat-scale default for local / projectless. Raise for worktree nodes.
-const START_RESOLVE_ATTEMPTS = handle.environment === "worktree" ? 90 : 30;
-const START_RESOLVE_DELAY_MS = handle.environment === "worktree" ? 2000 : 1000;
+const isWorktree = handle.environment?.type === "worktree";
+const START_RESOLVE_ATTEMPTS = isWorktree ? 90 : 30;
+const START_RESOLVE_DELAY_MS = isWorktree ? 2000 : 1000;
 
 function findExactThread(value, projectId, runTag, clientThreadId) {
   if (typeof value === "string") {

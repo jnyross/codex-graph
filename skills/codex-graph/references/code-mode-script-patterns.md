@@ -141,6 +141,7 @@ async function startRequiredNode(node, spawnTool, projectId) {
   const handle = {
     node_id: node.id,
     project_id: projectId,
+    environment: node.environment,
     run_tag: node.runTag,
     title: node.title,
     state: "pending_setup",
