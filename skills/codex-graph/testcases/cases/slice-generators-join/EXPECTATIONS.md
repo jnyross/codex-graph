@@ -8,7 +8,7 @@
 - `N1` freezes slices, quotas, and the seed list. Representative generators
   (`N2A`–`N2C`) fan out; cardinality (6 regions + 4 archetypes) lives in the
   node contract, not as 10 drawn boxes.
-- `I1` is the single integration owner: it applies the deterministic
+- `N3` is the single integration owner: it applies the deterministic
   exact-name dedupe and seed priority **in plain orchestration code**, and it
   is the only node that can shape the final pool. No generator prompt asks
   the worker to deduplicate the pool, enforce global coverage, or evaluate
@@ -36,9 +36,9 @@
   "case_id": "slice-generators-join",
   "task_family": "research or analysis",
   "baseline_tier": "L2",
-  "required_node_ids": ["N1", "N2A", "N2B", "N2C", "I1", "T1"],
+  "required_node_ids": ["N1", "N2A", "N2B", "N2C", "N3", "T1"],
   "parallel_groups": [["N2A", "N2B", "N2C"]],
-  "env": { "local": ["N1", "N2A", "N2B", "N2C", "I1", "T1"], "worktree": [] },
+  "env": { "local": ["N1", "N2A", "N2B", "N2C", "N3", "T1"], "worktree": [] },
   "collection": {
     "read_first": true,
     "read_after_wait": true,

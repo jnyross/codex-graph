@@ -88,6 +88,20 @@ test("every required node ID appears in the topology hint", () => {
   }
 });
 
+test("slice-generators-join uses canonical N3 integration vocabulary", () => {
+  const { expectations, hint } = loadCase("slice-generators-join");
+  assert.ok(expectations.required_node_ids.includes("N3"));
+  assert.ok(expectations.env.local.includes("N3"));
+  assert.equal(expectations.required_node_ids.includes("I1"), false);
+  assert.equal(expectations.env.local.includes("I1"), false);
+  assert.match(hint, /\bN3\b/);
+  assert.doesNotMatch(hint, /\bI1\b/);
+
+  const script = buildFixtureScript(expectations);
+  assert.doesNotMatch(script, /\bI1\b/);
+  assert.equal(checkWorkflowText(script, expectations).ok, true);
+});
+
 // ── Expectations extraction ─────────────────────────────────────────────────
 
 test("extractExpectations rejects missing, multiple, and malformed blocks", () => {
@@ -310,6 +324,30 @@ test("helper-wrapped correct collector is not false-failed on read-first", () =>
     collection: { read_first: true, read_after_wait: true },
   });
   assert.equal(verdict.ok, true);
+});
+
+test("resolved helper names reject member and identifier-suffix call sites", () => {
+  for (const falseReadCall of [
+    "await helpers.readFor(h);",
+    "await notreadFor(h);",
+  ]) {
+    const script = [
+      "const readFor = (h) => readThread.call({ threadId: h });",
+      "async function collect(h) {",
+      `  const falseRead = ${falseReadCall}`,
+      "  return await waitThreads.call({ targets: [h] });",
+      "}",
+    ].join("\n");
+    const verdict = checkWorkflowText(script, {
+      case_id: "x",
+      collection: { read_first: true },
+    });
+    const readFirst = verdict.checks.find(
+      (check) => check.id === "collection:read-first",
+    );
+    assert.equal(readFirst.ok, false, falseReadCall);
+    assert.match(readFirst.detail, /wait-only/, falseReadCall);
+  }
 });
 
 test("mentioning clientThreadId without a resolution loop fails (#14)", () => {

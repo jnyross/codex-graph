@@ -85,11 +85,17 @@ function collectHelperNames(scriptText, stemRe) {
 }
 
 function buildAwaitCallRe(stemSource, helperNames) {
-  const parts = [
-    stemSource,
-    ...[...helperNames].map((name) => `${escapeRegExp(name)}\\b`),
-  ];
-  return new RegExp(`await\\s+[\\w.$]*(?:${parts.join("|")})`);
+  const helperParts = [...helperNames].map(
+    (name) => `${escapeRegExp(name)}\\b`,
+  );
+  // Tool stems may be namespaced. Resolved helper names begin immediately
+  // after await whitespace, which supplies their required
+  // (?:^|[^\w.$]) boundary and rejects properties and identifier suffixes.
+  const callTargetSource = [
+    `[\\w.$]*(?:${stemSource})`,
+    ...helperParts,
+  ].join("|");
+  return new RegExp(`await\\s+(?:${callTargetSource})`);
 }
 
 function extractExpectations(markdown) {

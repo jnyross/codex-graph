@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## Unreleased
+
+- fix: require configured await-call helper names to be standalone targets instead of member/property or identifier-suffix matches, and align the slice-generators testcase with the canonical `N3` integration-node vocabulary
+
 ## [0.5.5] - 2026-08-09
 
 - fix: collection read bounds + error-envelope fail-fast — task reads omit `turnLimit` or bound it at 10 (ChatGPT Desktop rejects larger reads; openai/codex#30058) and return the newest turns first so the latest handoff is on the first page ("a clipped window is not proof of absence"); bare-string and error-envelope tool results are classified as tool errors, never as empty snapshots, with a bounded 3-consecutive-error abort embedding the verbatim error in a named blocker; blocked collections embed the last raw read result truncated to a named cap (Lisbon v5+v3 dogfood forensics) (#21)
