@@ -56,7 +56,7 @@ pending setup can still resolve within the named bound, and never create a
 replacement task while the original setup can still resolve. Prefer `title`;
 while a project task is loading, Codex can temporarily put the
 requested title in `summary`. Accept it only when it contains the same exact unique run
-tag and the project ID also matches. Copy the ready thread and host IDs into
+tag, and the project ID also matches when one exists. Copy the ready thread and host IDs into
 the existing handle.
 
 ```javascript
@@ -72,7 +72,10 @@ function findExactThread(value, projectId, runTag) {
     }
   }
   if (!value || typeof value !== "object") return null;
-  const sameProject = value.projectId === projectId;
+  // Projectless handles have no projectId; match the unique run tag alone.
+  // When a project is bound, require an exact projectId match as well.
+  const projectRequired = projectId != null && projectId !== "";
+  const sameProject = !projectRequired || value.projectId === projectId;
   const title = typeof value.title === "string" ? value.title : "";
   const summary = typeof value.summary === "string" ? value.summary : "";
   if (sameProject && (title.includes(runTag) || summary.includes(runTag))) return value;
@@ -276,6 +279,8 @@ Before returning a generated graph script, check these cases against the active 
   normalizes it before key lookup;
 - an aggregate start failure preserves each rejected node's handle in the
   blocked result;
+- a projectless pending setup resolves from a list response by unique run tag
+  alone, reuses the existing handle, and does not create a replacement task;
 - the pending task carries its unique run tag in `summary` before `title` is ready;
 - a wait call times out while the task remains active;
 - a wait call returns immediately and the fallback delay protects the wall-clock budget;

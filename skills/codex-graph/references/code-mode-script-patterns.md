@@ -26,7 +26,7 @@ deliverable before wiring its reference into the repeatable graph.
 
 ## Prefer semantic tool resolution over hard-coded namespaces
 
-Tool namespaces and multi-agent versions can differ. Resolve an operation from actual metadata, confirm it is callable, and fail closed when it is absent.
+Tool namespaces and multi-agent versions can differ. Resolve an operation from actual metadata, confirm it is callable, and fail closed when it is absent. Every resolved `call` must return the exact-envelope pair from `normalizeToolResult` so string tool payloads are parsed once at the boundary (see the next section).
 
 ```javascript
 function candidatePropertyNames(name) {
@@ -35,6 +35,15 @@ function candidatePropertyNames(name) {
     name.replace(/[.\-/:]+/g, "_"),
     name.replace(/[.\-/:]+/g, "__"),
   ])];
+}
+
+function normalizeToolResult(raw) {
+  if (typeof raw !== "string") return { value: raw, raw };
+  try {
+    return { value: JSON.parse(raw.trim()), raw };
+  } catch {
+    return { value: raw, raw };
+  }
 }
 
 function resolveTool(operation, { required = true } = {}) {
@@ -54,7 +63,8 @@ function resolveTool(operation, { required = true } = {}) {
         return {
           name: propertyName,
           metadata,
-          call: (args) => tools[propertyName](args),
+          call: async (args) =>
+            normalizeToolResult(await tools[propertyName](args)),
         };
       }
     }
@@ -65,7 +75,8 @@ function resolveTool(operation, { required = true } = {}) {
       return {
         name: propertyName,
         metadata: { name: propertyName, description: "" },
-        call: (args) => tools[propertyName](args),
+        call: async (args) =>
+          normalizeToolResult(await tools[propertyName](args)),
       };
     }
   }
@@ -75,7 +86,7 @@ function resolveTool(operation, { required = true } = {}) {
 }
 ```
 
-Do not rely on this helper alone when the current declaration already provides an exact name and schema. Prefer the exact exposed declaration and use defensive resolution only for namespace portability.
+Do not rely on this helper alone when the current declaration already provides an exact name and schema. Prefer the exact exposed declaration and use defensive resolution only for namespace portability. If you resolve a tool without `resolveTool`, still wrap its `call` with `normalizeToolResult` the same way.
 
 ## Normalize tool results at the call boundary
 
@@ -85,23 +96,12 @@ ChatGPT Desktop for macOS: `typeof result === "string"`). Any key lookup
 applied to the raw return silently fails, which can wrongly mark every
 successful start as failed.
 
-Have every resolved `call` return the exact-envelope pair so the caller can
-use the parsed value for key lookup and keep the raw payload with the handle —
+`resolveTool` above already returns `{ value, raw }` from every `call`. Use
+the parsed value for key lookup and keep the raw payload with the handle —
 no shared mutable state:
 
 ```javascript
-function normalizeToolResult(raw) {
-  if (typeof raw !== "string") return { value: raw, raw };
-  try {
-    return { value: JSON.parse(raw.trim()), raw };
-  } catch {
-    return { value: raw, raw };
-  }
-}
-
-call: async (args) => normalizeToolResult(await tools[propertyName](args)),
-
-// at a start site:
+// at a start site (createThread came from resolveTool):
 const start = await createThread.call(startArgs);
 handle.start_result = start.raw;
 const threadId = findString(start.value, ["threadId", "thread_id"]);
@@ -171,7 +171,7 @@ When the script creates visible Codex tasks, read `task-lifecycle.md` and use it
 
 ## Preserve setup handles and terminal handoffs
 
-A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the exact project ID and unique run tag. The tag normally appears in `title`, but can appear in `summary` while project setup is loading. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
+A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the unique run tag, and the exact project ID when one exists. The tag normally appears in `title`, but can appear in `summary` while project setup is loading. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
 
 Do not reduce a task handle to one convenience ID while setup or execution is live. A blocked terminal report must include each node ID, ready or pending ID, project ID, host ID, title, state, and the exact start or collection error.
 
