@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## [0.4.3] - 2026-08-09
+
+- fix: scope mid-graph worker prompts to node-local obligations (#12)
+
 ## [0.4.2] - 2026-08-09
 
 - fix: normalize string tool results and preserve start-failure handles (#11)
