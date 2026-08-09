@@ -177,6 +177,12 @@ def main() -> None:
         "graph_coherence.py",
         "per node",
         "provisioning-scale",
+        "isGitRepository === true",
+        "named `unresolved_risk`",
+        "`name`/`title`/`summary`/`preview`",
+        "bracketed exact form `[<runTag>]`",
+        "per-node unique",
+        "claimed thread id",
     ]:
         if required_phrase not in text:
             fail(f"missing required behavior: {required_phrase}")
@@ -212,6 +218,15 @@ def main() -> None:
         "environment per node",
         "provisioning-scale",
         "clientThreadId",
+        "`name`/`title`/`summary`/`preview`",
+        "bracketed exact form `[<runTag>]`",
+        "never add a bare `id` fallback",
+        "orchestrator's own (or parent)",
+        "per-node unique",
+        "claimed thread id",
+        "no cross-binding, no double-claim",
+        "isGitRepository === true",
+        "named `unresolved_risk`",
     ]:
         if required_phrase not in lifecycle:
             fail(f"task lifecycle reference is missing: {required_phrase}")
@@ -256,6 +271,12 @@ def main() -> None:
         "per node",
         "Never apply `worktree` to every node",
         "provisioning-scale",
+        "isGitRepository === true",
+        "named `unresolved_risk`",
+        "`name`/`title`/`summary`/`preview`",
+        "bracketed exact form `[<runTag>]`",
+        "per-node unique",
+        "claimed thread id",
     ]:
         if required_phrase not in patterns:
             fail(f"code patterns are missing verified graph lesson: {required_phrase}")

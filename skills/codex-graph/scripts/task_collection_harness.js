@@ -36,6 +36,98 @@ function canonicalUrlForComparison(url) {
     .trim();
 }
 
+/**
+ * Resolve a pending-setup handle from a task-list snapshot.
+ * Matches the per-node unique form only: the bracketed exact run tag
+ * `[<runTag>]` plus the node id in the same field, against the explicit key
+ * list name/title/summary/preview (OSS rows carry name/preview, Desktop rows
+ * have shown title/summary). Prefers name/title/summary over preview, never
+ * matches an excluded (own/parent or already claimed) thread id, and never
+ * falls back to a bare `id` key for matching.
+ */
+function findExactThread(value, projectId, runTag, nodeId, clientThreadId, excludeThreadIds = []) {
+  const excluded = new Set([...excludeThreadIds].filter(Boolean).map(String));
+  const taggedForm = `[${runTag}]`; // bracketed exact form only
+  const text = (row, key) => (typeof row[key] === "string" ? row[key] : "");
+  // Per-node unique form: the bracketed tag AND the node id in one field.
+  // Token-boundary match so N1 does not substring-hit N10 / N2A.
+  const nodeToken = nodeId
+    ? new RegExp(`\\b${String(nodeId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`)
+    : null;
+  const fieldHit = (s) => s.includes(taggedForm) && (!nodeToken || nodeToken.test(s));
+  const rowMatches = (row, allowPreview) => {
+    const rowThreadId = row.threadId ?? row.thread_id ?? row.id ?? null;
+    if (rowThreadId != null && excluded.has(String(rowThreadId))) return false;
+    const listedClient = row.clientThreadId ?? row.client_thread_id ?? null;
+    if (
+      clientThreadId &&
+      listedClient &&
+      String(listedClient) === String(clientThreadId)
+    ) {
+      return true;
+    }
+    // Explicit key list: OSS rows carry name/preview, Desktop rows have
+    // shown title/summary. Never add a bare `id` fallback here.
+    const strongHit =
+      fieldHit(text(row, "name")) ||
+      fieldHit(text(row, "title")) ||
+      fieldHit(text(row, "summary"));
+    const previewHit = allowPreview && fieldHit(text(row, "preview"));
+    if (!strongHit && !previewHit) return false;
+    // Projectless handles have no projectId; match the unique run tag alone.
+    // When a project is bound, prefer projectId match but do not require it
+    // while setup is still loading (projectId may be absent on early rows).
+    const projectRequired = projectId != null && projectId !== "";
+    const listedProject = row.projectId ?? row.project_id;
+    return !projectRequired || listedProject == null || listedProject === projectId;
+  };
+  const walk = (node, allowPreview) => {
+    if (typeof node === "string") {
+      try {
+        return walk(JSON.parse(node), allowPreview);
+      } catch {
+        return null;
+      }
+    }
+    if (!node || typeof node !== "object") return null;
+    if (!Array.isArray(node) && rowMatches(node, allowPreview)) return node;
+    for (const nested of Object.values(node)) {
+      const found = walk(nested, allowPreview);
+      if (found) return found;
+    }
+    return null;
+  };
+  // Pass 1 ignores preview everywhere; pass 2 admits preview-only hits.
+  // A parent thread's preview can embed worker titles — preview is a
+  // fallback key, never the preferred one.
+  return walk(value, false) ?? walk(value, true);
+}
+
+/**
+ * Gate worktree targets on the project lookup's isGitRepository flag.
+ * openai/codex#28204: worktree provisioning on a non-git project root fails
+ * silently — no thread row is written and the pending id is never listed.
+ * Fails closed unless isGitRepository === true.
+ */
+function preflightWorktreeTarget({ environmentType, isGitRepository, singleWriter = false }) {
+  if (environmentType !== "worktree" || isGitRepository === true) {
+    return { action: "proceed" };
+  }
+  if (singleWriter) {
+    return {
+      action: "degrade_to_root_write",
+      reason:
+        "worktree requires a git repository; route the single repository write through the root orchestrator",
+    };
+  }
+  return {
+    action: "fail_closed",
+    unresolved_risk:
+      "worktree target requires isGitRepository === true " +
+      "(openai/codex#28204: silent worktree-init failure — no thread row, never listed)",
+  };
+}
+
 const HANDOFF_STATUSES = new Set([
   "passed",
   "complete",
@@ -288,6 +380,8 @@ module.exports = {
   collectTask,
   isValidTerminalHandoff,
   findHandoffInValue,
+  findExactThread,
+  preflightWorktreeTarget,
   normalizeToolResult,
   aggregateStartFailure,
   canonicalUrlForComparison,

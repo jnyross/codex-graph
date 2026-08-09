@@ -200,6 +200,11 @@ When the script creates visible Codex tasks, read `task-lifecycle.md` and use it
   `environment: { type: "local" }`.
 - Nodes that write repository files →
   `environment: { type: "worktree" }` with disjoint write scopes.
+- `worktree` REQUIRES `isGitRepository === true` from the project lookup.
+  On a non-git project root, worktree init fails silently (openai/codex#28204:
+  no thread row is written and the pending id is never listed). With a single
+  repository writer, degrade that write to the root orchestrator on the real
+  checkout; otherwise fail fast with a named `unresolved_risk`.
 - Never apply `worktree` to every node because one writer exists in the graph
   (Lisbon dogfood v4: global worktree on research workers left all three in
   `pending_setup` with unresolved `clientThreadId`).
@@ -211,7 +216,7 @@ Use a projectless target only when no saved project applies or the user explicit
 
 ## Preserve setup handles and terminal handoffs
 
-A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the unique run tag (prefer `title`, accept `summary` while loading). Prefer exact project ID when present on the list row, but do not require it during early setup loading. Correlate by `clientThreadId` when the list exposes it. Use a chat-scale bound for local starts and a longer provisioning-scale bound for worktree starts. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
+A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the unique run tag in its bracketed exact form `[<runTag>]` against the explicit key list `name`/`title`/`summary`/`preview` (open-source rows carry `name`/`preview`, not `title`/`summary`). Require the per-node unique form — the bracketed tag plus the node id in the same field — so concurrent pending workers never cross-bind; prefer `name`/`title` over `preview`; never adopt the orchestrator's own thread row as a worker handle; and exclude every already claimed thread id from later resolutions. Prefer exact project ID when present on the list row, but do not require it during early setup loading. Correlate by `clientThreadId` when the list exposes it. Use a chat-scale bound for local starts and a longer provisioning-scale bound for worktree starts. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
 
 Do not reduce a task handle to one convenience ID while setup or execution is live. A blocked terminal report must include each node ID, ready or pending ID, project ID, host ID, title, state, and the exact start or collection error.
 

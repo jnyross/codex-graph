@@ -19,11 +19,21 @@ Inspect the active declarations for project listing and task creation.
      `clientThreadId`, never resolved within a chat-scale bound, and blocked
      before collection while v3's `local` research workers got ready
      `threadId`s immediately.
-4. Prefer the root orchestrator (or a single integration owner on `local` /
+4. A `worktree` environment REQUIRES a Git repository. The project lookup
+   already returns `isGitRepository`; assert `isGitRepository === true`
+   before every worktree create. On a non-git project root, worktree
+   provisioning fails silently: Codex runs `git rev-parse --show-toplevel`,
+   aborts before `git worktree add`, writes no thread row, and the pending
+   id never appears in the task list (openai/codex#28204). When the
+   preflight fails and the graph has a single repository writer, degrade
+   that write to a root-orchestrator write on the real checkout; otherwise
+   fail fast before any create with a named `unresolved_risk` that names
+   the non-git project root.
+5. Prefer the root orchestrator (or a single integration owner on `local` /
    the real project checkout) for final user-facing artifacts such as report
    files in the project root. Do not strand publication writes only inside a
    disposable worker worktree.
-5. Use a projectless target only when no saved project applies or the user explicitly requests it.
+6. Use a projectless target only when no saved project applies or the user explicitly requests it.
 
 Keep the resolved project ID in the workflow result. Do not use a generated directory as the identity of a saved-project task.
 
@@ -45,7 +55,10 @@ boundary"): parse the whole trimmed string exactly once, never apply fragment
 extraction heuristics to a tool return, use the parsed value for key lookup,
 and keep the raw payload in the handle's `start_result`.
 
-A pending setup handle is success in progress. Preserve it. Use a unique run tag and task title for every node. Store this handle shape:
+A pending setup handle is success in progress. Preserve it. Give every node
+a per-node unique run tag (for a shared graph tag, suffix the node id:
+`<graphTag>-<nodeId>`) and put it in the task title in the bracketed exact
+form `[<runTag>] <label>`. Store this handle shape:
 
 ```javascript
 {
@@ -67,81 +80,138 @@ setup is **required**, not optional: poll the task list with a named maximum and
 short delay. This applies to projectless targets too — match the unique run tag
 (and the exact project ID when one exists). Never fail a start closed while its
 pending setup can still resolve within the named bound, and never create a
-replacement task while the original setup can still resolve. Prefer `title`;
-while a project task is loading, Codex can temporarily put the
-requested title in `summary`. Accept it only when it contains the same exact unique run
-tag. When a project is bound, prefer an exact `projectId` match, but while
-setup is still loading allow the same unique run tag in `title`/`summary`
-even if `projectId` is not yet present on the list row (Lisbon v4: list
-matching that *required* projectId during worktree setup never resolved).
-When the list or create payload exposes `clientThreadId` (or equivalent), also
-correlate the pending handle by that ID. Copy the ready thread and host IDs into
-the existing handle.
+replacement task while the original setup can still resolve.
 
-Use a **chat-scale** bound for local/projectless starts (for example 30×1s or
-60×2s). Use a **provisioning-scale** bound when the node uses a worktree
-environment (worktree creation alone can exceed two minutes). Name both
-constants in the script.
+Match the run tag only in the bracketed exact form `[<runTag>]`, against the
+explicit key list `name`/`title`/`summary`/`preview`. Open-source thread rows
+carry `name` (optional user-facing title) and `preview` (first user message),
+not `title`/`summary` (`thread_data.rs`); a matcher that reads only
+`title`/`summary` misses a materialized, ready thread. Desktop rows have
+shown `title`, and while a project task is loading, Codex can temporarily put the
+requested title in `summary` — keep both keys too. Prefer `name`/`title`
+(and `summary`) over `preview`: a parent thread's preview can embed worker
+titles, so accept a preview-only hit just as a second-pass fallback, and
+never match a row whose thread id is the orchestrator's own (or parent)
+thread id, when that id is known. Keep the key list explicit;
+never add a bare `id` fallback to list matching. Extracting the thread id
+from an already-matched row is different: open-source rows carry the thread
+id under `id`, so `id` is a valid extraction key once the row has matched —
+after the match, never to make it.
+
+A shared graph tag alone is not sufficient: with concurrent pending workers,
+a shared-tag hit can bind two handles to the same thread or to each other's
+threads (frozen Lisbon v5 review, finding 4). Require the per-node unique
+form — the bracketed tag hit plus the handle's node id in the same field; a
+per-node run tag `<graphTag>-<nodeId>` satisfies both at once. Record every
+claimed thread id and exclude it from every later resolution, so each thread
+id is claimed by at most one handle.
+When a project is bound, prefer an exact `projectId` match, but while setup
+is still loading allow the same run-tag hit even if `projectId` is not yet
+present on the list row (Lisbon v4: list matching that *required* projectId
+during worktree setup never resolved). When the list or create payload
+exposes `clientThreadId` (or equivalent), also correlate the pending handle
+by that ID. Copy the ready thread and host IDs into the existing handle.
+
+Resolve bounds are per node. Use a **chat-scale** bound for local or
+projectless starts (for example 30×1s or 60×2s) and a **provisioning-scale**
+bound when that node uses a worktree environment (worktree creation alone can
+exceed two minutes). Derive the bound from the handle, never from one
+graph-wide constant, and resolve pending setups concurrently with
+`Promise.allSettled` so a provisioning-scale bound is never summed across
+nodes.
 
 ```javascript
-// Chat-scale default for local / projectless. Raise for worktree nodes.
-const isWorktree = handle.environment?.type === "worktree";
-const START_RESOLVE_ATTEMPTS = isWorktree ? 90 : 30;
-const START_RESOLVE_DELAY_MS = isWorktree ? 2000 : 1000;
-
-function findExactThread(value, projectId, runTag, clientThreadId) {
-  if (typeof value === "string") {
-    try {
-      return findExactThread(JSON.parse(value), projectId, runTag, clientThreadId);
-    } catch {
-      return null;
-    }
-  }
-  if (!value || typeof value !== "object") return null;
-  const listedClient =
-    value.clientThreadId ?? value.client_thread_id ?? null;
-  if (
-    clientThreadId &&
-    listedClient &&
-    String(listedClient) === String(clientThreadId)
-  ) {
-    return value;
-  }
-  // Projectless handles have no projectId; match the unique run tag alone.
-  // When a project is bound, prefer projectId match but do not require it
-  // while setup is still loading (projectId may be absent on early list rows).
-  const title = typeof value.title === "string" ? value.title : "";
-  const summary = typeof value.summary === "string" ? value.summary : "";
-  const tagHit = title.includes(runTag) || summary.includes(runTag);
-  if (tagHit) {
-    const projectRequired = projectId != null && projectId !== "";
-    const listedProject = value.projectId ?? value.project_id;
-    if (!projectRequired || listedProject == null || listedProject === projectId) {
-      return value;
-    }
-  }
-  for (const nested of Object.values(value)) {
-    const found = findExactThread(nested, projectId, runTag, clientThreadId);
-    if (found) return found;
-  }
-  return null;
+// Bounds are per node. Never hoist one bound for the whole graph.
+function resolveBounds(handle) {
+  const worktree = handle.environment?.type === "worktree";
+  return { attempts: worktree ? 90 : 30, delayMs: worktree ? 2000 : 1000 };
 }
 
-for (let attempt = 1; !handle.thread_id && attempt <= START_RESOLVE_ATTEMPTS; attempt += 1) {
+// Claims are the opposite of bounds: one set shared across every pending
+// resolution. Never adopt the orchestrator's own (or parent) thread, or a
+// thread already claimed by another handle.
+const CLAIMED_THREAD_IDS = new Set([ownThreadId].filter(Boolean).map(String));
+
+function findExactThread(value, projectId, runTag, nodeId, clientThreadId, excludeThreadIds = []) {
+  const excluded = new Set([...excludeThreadIds].filter(Boolean).map(String));
+  const taggedForm = `[${runTag}]`; // bracketed exact form only
+  const text = (row, key) => (typeof row[key] === "string" ? row[key] : "");
+  // Per-node unique form: the bracketed tag AND the node id in one field.
+  // Token-boundary match so N1 does not substring-hit N10 / N2A.
+  const nodeToken = nodeId
+    ? new RegExp(`\\b${String(nodeId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`)
+    : null;
+  const fieldHit = (s) => s.includes(taggedForm) && (!nodeToken || nodeToken.test(s));
+  const rowMatches = (row, allowPreview) => {
+    const rowThreadId = row.threadId ?? row.thread_id ?? row.id ?? null;
+    if (rowThreadId != null && excluded.has(String(rowThreadId))) return false;
+    const listedClient = row.clientThreadId ?? row.client_thread_id ?? null;
+    if (
+      clientThreadId &&
+      listedClient &&
+      String(listedClient) === String(clientThreadId)
+    ) {
+      return true;
+    }
+    // Explicit key list: OSS rows carry name/preview, Desktop rows have
+    // shown title/summary. Never add a bare `id` fallback here.
+    const strongHit =
+      fieldHit(text(row, "name")) ||
+      fieldHit(text(row, "title")) ||
+      fieldHit(text(row, "summary"));
+    const previewHit = allowPreview && fieldHit(text(row, "preview"));
+    if (!strongHit && !previewHit) return false;
+    // Projectless handles have no projectId; match the unique run tag alone.
+    // When a project is bound, prefer projectId match but do not require it
+    // while setup is still loading (projectId may be absent on early rows).
+    const projectRequired = projectId != null && projectId !== "";
+    const listedProject = row.projectId ?? row.project_id;
+    return !projectRequired || listedProject == null || listedProject === projectId;
+  };
+  const walk = (node, allowPreview) => {
+    if (typeof node === "string") {
+      try {
+        return walk(JSON.parse(node), allowPreview);
+      } catch {
+        return null;
+      }
+    }
+    if (!node || typeof node !== "object") return null;
+    if (!Array.isArray(node) && rowMatches(node, allowPreview)) return node;
+    for (const nested of Object.values(node)) {
+      const found = walk(nested, allowPreview);
+      if (found) return found;
+    }
+    return null;
+  };
+  // Pass 1 ignores preview everywhere; pass 2 admits preview-only hits.
+  // A parent thread's preview can embed worker titles — preview is a
+  // fallback key, never the preferred one.
+  return walk(value, false) ?? walk(value, true);
+}
+
+const { attempts, delayMs } = resolveBounds(handle);
+
+for (let attempt = 1; !handle.thread_id && attempt <= attempts; attempt += 1) {
   const snapshot = await listThreads({ limit: 50 });
   const record = findExactThread(
     snapshot,
     handle.project_id,
     handle.run_tag,
+    handle.node_id,
     handle.client_thread_id,
+    CLAIMED_THREAD_IDS,
   );
   if (record) {
+    // Extraction from a matched row may read `id` (open-source rows carry
+    // the thread id there). Matching itself never falls back to bare `id`.
     handle.thread_id = findString(record, ["threadId", "thread_id", "id"]);
     handle.host_id = findString(record, ["hostId", "host_id"]);
     handle.state = handle.thread_id ? "active" : "pending_setup";
+    if (handle.thread_id) CLAIMED_THREAD_IDS.add(String(handle.thread_id));
   }
-  if (!handle.thread_id && attempt < START_RESOLVE_ATTEMPTS) {
-    await new Promise((resolve) => setTimeout(resolve, START_RESOLVE_DELAY_MS));
+  if (!handle.thread_id && attempt < attempts) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 }
 ```
@@ -326,7 +396,8 @@ Validate each active handle before use:
 - project ID and host ID match the current resolved target;
 - model and reasoning policy match the node contract;
 - a ready task ID exists;
-- the task title or summary contains the expected unique run tag.
+- the row's `name`/`title`/`summary`/`preview` contains the bracketed exact
+  run tag `[<runTag>]` together with the node id.
 
 Add the validated handle to the live-handle registry and collect it. Do not call the create tool for that active node. Reject a stale, ambiguous, or policy-mismatched handle with its exact reason. Do not require or fabricate handles for not-started nodes.
 
@@ -367,6 +438,13 @@ Before returning a generated graph script, check these cases against the active 
 - a projectless pending setup resolves from a list response by unique run tag
   alone, reuses the existing handle, and does not create a replacement task;
 - the pending task carries its unique run tag in `summary` before `title` is ready;
+- a ready thread listed only under `name`/`preview` keys still resolves;
+- a run-tag hit that appears only in the orchestrator's own thread preview
+  is rejected instead of adopted as a worker handle;
+- two concurrent pending workers sharing a graph tag each resolve to their
+  own thread — no cross-binding, no double-claim;
+- a worktree target on a non-git project root degrades to a root write or
+  fails fast before any create;
 - a wait call times out while the task remains active;
 - a wait call returns immediately and the fallback delay protects the wall-clock budget;
 - the final JSON is nested in structured `items`;

@@ -9,6 +9,8 @@ const {
   aggregateStartFailure,
   canonicalUrlForComparison,
   findHandoffInValue,
+  findExactThread,
+  preflightWorktreeTarget,
 } = require("./task_collection_harness.js");
 
 function sequenceWaiter(snapshots) {
@@ -436,4 +438,147 @@ test("adversarial dual validators: malformed lane fails closed at the join", asy
     (lane) => lane.status === "passed" && lane.terminal?.pass === true,
   );
   assert.equal(confirmed, false);
+});
+
+test("resolves a ready thread listed under OSS name/preview keys", () => {
+  const runTag = "lisbon-family-1786287437517-N2A";
+  const snapshot = {
+    threads: [
+      { id: "t-other", name: "[other-tag-N9Z] unrelated", preview: "noise" },
+      {
+        id: "t-worker",
+        name: `[${runTag}] Research transport`,
+        preview: "You are node N2A.",
+        cwd: "/repo",
+        status: "ready",
+      },
+    ],
+  };
+  const record = findExactThread(snapshot, "proj-1", runTag, "N2A", null);
+  assert.equal(record.id, "t-worker");
+});
+
+test("still correlates a pending handle by clientThreadId", () => {
+  const snapshot = {
+    threads: [{ id: "t-9", clientThreadId: "client-new-thread:abc" }],
+  };
+  const record = findExactThread(
+    snapshot,
+    "proj-1",
+    "tag-N1",
+    "N1",
+    "client-new-thread:abc",
+  );
+  assert.equal(record.id, "t-9");
+});
+
+test("resolves via preview only as a second-pass fallback", () => {
+  const runTag = "lisbon-family-1786287437517-N2B";
+  const snapshot = {
+    threads: [
+      { id: "t-worker", preview: `[${runTag}] Research beaches`, status: "ready" },
+    ],
+  };
+  const record = findExactThread(snapshot, null, runTag, "N2B", null);
+  assert.equal(record.id, "t-worker");
+});
+
+test("requires the bracketed exact run-tag form", () => {
+  const runTag = "lisbon-family-1786287437517-N2D";
+  const snapshot = {
+    threads: [{ id: "t-1", title: `retry ${runTag} later`, status: "ready" }],
+  };
+  assert.equal(findExactThread(snapshot, null, runTag, "N2D", null), null);
+});
+
+test("rejects a run-tag hit that only lives in the parent thread preview", () => {
+  const runTag = "lisbon-family-1786287437517-N2C";
+  const parentRow = {
+    id: "t-parent",
+    name: "Orchestrate Lisbon graph",
+    preview: `Start worker [${runTag}] Research food now`,
+  };
+  const workerRow = { id: "t-worker", name: `[${runTag}] Research food` };
+  const record = findExactThread(
+    { threads: [parentRow, workerRow] },
+    null,
+    runTag,
+    "N2C",
+    null,
+    ["t-parent"],
+  );
+  assert.equal(record.id, "t-worker");
+  assert.equal(
+    findExactThread({ threads: [parentRow] }, null, runTag, "N2C", null, [
+      "t-parent",
+    ]),
+    null,
+  );
+});
+
+test("two concurrent pending workers resolve to their own threads", () => {
+  const sharedTag = "lisbon-v5-1786290000000";
+  const snapshot = {
+    threads: [
+      { id: "t-b", name: `[${sharedTag}] N2B beaches` },
+      { id: "t-a", name: `[${sharedTag}] N2A transport` },
+    ],
+  };
+  const claimed = new Set();
+  const recordA = findExactThread(snapshot, null, sharedTag, "N2A", null, claimed);
+  assert.equal(recordA.id, "t-a", "shared-tag hit must not cross-bind to N2B's thread");
+  claimed.add(recordA.id);
+  const recordB = findExactThread(snapshot, null, sharedTag, "N2B", null, claimed);
+  assert.equal(recordB.id, "t-b");
+  claimed.add(recordB.id);
+  // A claimed thread id is never resolved twice.
+  assert.equal(findExactThread(snapshot, null, sharedTag, "N2A", null, claimed), null);
+});
+
+test("node id match requires a token boundary (N1 vs N10, N2 vs N2A)", () => {
+  const sharedTag = "lisbon-v5-1786290000001";
+  const snapshot = {
+    threads: [
+      { id: "t-10", name: `[${sharedTag}] N10 transport` },
+      { id: "t-2a", name: `[${sharedTag}] N2A beaches` },
+      { id: "t-1", name: `[${sharedTag}] N1 scope` },
+      { id: "t-2", name: `[${sharedTag}] N2 inventory` },
+    ],
+  };
+  assert.equal(findExactThread(snapshot, null, sharedTag, "N1", null).id, "t-1");
+  assert.equal(findExactThread(snapshot, null, sharedTag, "N10", null).id, "t-10");
+  assert.equal(findExactThread(snapshot, null, sharedTag, "N2", null).id, "t-2");
+  assert.equal(findExactThread(snapshot, null, sharedTag, "N2A", null).id, "t-2a");
+});
+
+test("worktree preflight degrades a git-less single writer to a root write", () => {
+  const decision = preflightWorktreeTarget({
+    environmentType: "worktree",
+    isGitRepository: false,
+    singleWriter: true,
+  });
+  assert.equal(decision.action, "degrade_to_root_write");
+});
+
+test("worktree preflight fails closed with a named unresolved risk", () => {
+  const decision = preflightWorktreeTarget({
+    environmentType: "worktree",
+    isGitRepository: undefined,
+  });
+  assert.equal(decision.action, "fail_closed");
+  assert.match(decision.unresolved_risk, /isGitRepository === true/);
+  assert.match(decision.unresolved_risk, /28204/);
+});
+
+test("worktree preflight passes git repositories and local targets", () => {
+  assert.equal(
+    preflightWorktreeTarget({ environmentType: "worktree", isGitRepository: true })
+      .action,
+    "proceed",
+  );
+  assert.equal(
+    preflightWorktreeTarget({ environmentType: "local", isGitRepository: false })
+      .action,
+    "proceed",
+  );
 });
