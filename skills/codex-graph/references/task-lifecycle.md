@@ -23,26 +23,14 @@ A task-creation call can return:
 - a real tool error.
 
 At the JavaScript level the entire result may arrive as a JSON **string**
-(observed for `codex_app__create_thread` on ChatGPT Desktop for macOS).
-Normalize every tool result at the call boundary with an exact-envelope parse
-before any key lookup, and keep the raw payload in the handle's
-`start_result`:
-
-```javascript
-function normalizeToolResult(raw) {
-  if (typeof raw !== "string") return { value: raw, raw };
-  try {
-    return { value: JSON.parse(raw.trim()), raw };
-  } catch {
-    return { value: raw, raw };
-  }
-}
-```
-
-Parse the whole trimmed string exactly once; never apply fragment extraction
-heuristics to a tool return. A key lookup applied to the raw string silently
-returns nothing and wrongly converts every successful start into a start
-failure.
+(observed for `codex_app__create_thread` on ChatGPT Desktop for macOS). A key
+lookup applied to the raw string silently returns nothing and wrongly converts
+every successful start into a start failure. Normalize every tool result at
+the call boundary with the exact-envelope parser from
+`code-mode-script-patterns.md` ("Normalize tool results at the call
+boundary"): parse the whole trimmed string exactly once, never apply fragment
+extraction heuristics to a tool return, use the parsed value for key lookup,
+and keep the raw payload in the handle's `start_result`.
 
 A pending setup handle is success in progress. Preserve it. Use a unique run tag and task title for every node. Store this handle shape:
 

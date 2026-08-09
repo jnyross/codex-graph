@@ -85,8 +85,9 @@ ChatGPT Desktop for macOS: `typeof result === "string"`). Any key lookup
 applied to the raw return silently fails, which can wrongly mark every
 successful start as failed.
 
-Wrap every resolved `call` with an exact-envelope parser that keeps the raw
-payload available:
+Have every resolved `call` return the exact-envelope pair so the caller can
+use the parsed value for key lookup and keep the raw payload with the handle —
+no shared mutable state:
 
 ```javascript
 function normalizeToolResult(raw) {
@@ -98,11 +99,12 @@ function normalizeToolResult(raw) {
   }
 }
 
-call: async (args) => {
-  const { value, raw } = normalizeToolResult(await tools[propertyName](args));
-  lastRawToolResult = raw; // keep for handles and blocked evidence
-  return value;
-}
+call: async (args) => normalizeToolResult(await tools[propertyName](args)),
+
+// at a start site:
+const start = await createThread.call(startArgs);
+handle.start_result = start.raw;
+const threadId = findString(start.value, ["threadId", "thread_id"]);
 ```
 
 Parse the whole trimmed string exactly once. Do not apply fragment heuristics
