@@ -144,36 +144,45 @@ function isValidTerminalHandoff(value, nodeId) {
   );
 }
 
-/** Recursively find a schema-valid handoff for nodeId in any nested structure. */
-function findHandoffInValue(value, nodeId, seen = new Set()) {
-  if (value == null) return null;
+/** Recursively yield schema-valid handoffs for nodeId in depth-first order. */
+function* iterateHandoffsInValue(value, nodeId, seen = new Set()) {
+  if (value == null) return;
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (
       !(trimmed.startsWith("{") || trimmed.startsWith("[")) ||
       seen.has(trimmed)
     ) {
-      return null;
+      return;
     }
     seen.add(trimmed);
     try {
-      return findHandoffInValue(JSON.parse(trimmed), nodeId, seen);
+      yield* iterateHandoffsInValue(JSON.parse(trimmed), nodeId, seen);
     } catch {
-      return null;
+      return;
     }
+    return;
   }
-  if (typeof value !== "object") return null;
-  if (isValidTerminalHandoff(value, nodeId)) return value;
+  if (typeof value !== "object") return;
+  if (isValidTerminalHandoff(value, nodeId)) {
+    yield value;
+    return;
+  }
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = findHandoffInValue(item, nodeId, seen);
-      if (found) return found;
+      yield* iterateHandoffsInValue(item, nodeId, seen);
     }
-    return null;
+    return;
   }
   for (const nested of Object.values(value)) {
-    const found = findHandoffInValue(nested, nodeId, seen);
-    if (found) return found;
+    yield* iterateHandoffsInValue(nested, nodeId, seen);
+  }
+}
+
+/** Recursively find a schema-valid handoff for nodeId in any nested structure. */
+function findHandoffInValue(value, nodeId, seen = new Set()) {
+  for (const handoff of iterateHandoffsInValue(value, nodeId, seen)) {
+    return handoff;
   }
   return null;
 }
@@ -225,42 +234,48 @@ async function collectTask({
   const calls = [];
   const reads = [];
 
+  function acceptHandoff(handoff) {
+    const isSuccessStatus =
+      handoff.status === "complete" || handoff.status === "passed";
+    if (isSuccessStatus && typeof validateHandoff === "function") {
+      const errors = validateHandoff(handoff);
+      if (Array.isArray(errors) && errors.length > 0) {
+        // Structurally invalid sighting, not a terminal: skip and keep
+        // collecting (including later handoffs in this same snapshot).
+        // Explicit blocked/failed status always terminates.
+        const key = JSON.stringify(handoff);
+        if (!seenHandoffKeys.has(key)) {
+          seenHandoffKeys.add(key);
+          invalidSightings.push({ errors, handoff });
+        }
+        return false;
+      }
+    }
+    terminal = handoff;
+    return true;
+  }
+
+  function ingestHandoffsFrom(root) {
+    for (const handoff of iterateHandoffsInValue(root, nodeId)) {
+      if (acceptHandoff(handoff)) return true;
+    }
+    return false;
+  }
+
   async function ingestSnapshot(snapshot, source, options = {}) {
     if (!snapshot || typeof snapshot !== "object") return;
     const { collectItems = true } = options;
-    let handoff = null;
     if (minTurn !== undefined) {
       // Repair recollect: only turns at index >= minTurn carry known
       // provenance; terminal/items/whole-snapshot fallbacks are skipped.
       if (Array.isArray(snapshot.turns)) {
-        handoff = findHandoffInValue(snapshot.turns.slice(minTurn), nodeId);
+        ingestHandoffsFrom(snapshot.turns.slice(minTurn));
       }
     } else {
-      handoff =
-        findHandoffInValue(snapshot.terminal, nodeId) ||
-        findHandoffInValue(snapshot.items, nodeId) ||
-        findHandoffInValue(snapshot.turns, nodeId) ||
-        findHandoffInValue(snapshot, nodeId);
-    }
-    if (handoff) {
-      const isSuccessStatus =
-        handoff.status === "complete" || handoff.status === "passed";
-      if (isSuccessStatus && typeof validateHandoff === "function") {
-        const errors = validateHandoff(handoff);
-        if (Array.isArray(errors) && errors.length > 0) {
-          // Structurally invalid sighting, not a terminal: skip and keep
-          // collecting. Explicit blocked/failed status always terminates.
-          const key = JSON.stringify(handoff);
-          if (!seenHandoffKeys.has(key)) {
-            seenHandoffKeys.add(key);
-            invalidSightings.push({ errors, handoff });
-          }
-        } else {
-          terminal = handoff;
-        }
-      } else {
-        terminal = handoff;
-      }
+      ingestHandoffsFrom(snapshot.terminal) ||
+        ingestHandoffsFrom(snapshot.items) ||
+        ingestHandoffsFrom(snapshot.turns) ||
+        ingestHandoffsFrom(snapshot);
     }
     if (collectItems && Array.isArray(snapshot.items)) {
       for (const item of snapshot.items) {

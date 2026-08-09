@@ -644,6 +644,35 @@ test("skips a structurally invalid complete sighting and collects a later valid 
   assert.deepEqual(result.invalidSightings[0].handoff, invalidHandoff);
 });
 
+test("skips an invalid complete sighting and accepts a later valid handoff in the same snapshot", async () => {
+  const invalidHandoff = {
+    node_id: "W1",
+    status: "complete",
+    candidates: [{ id: "broken" }],
+  };
+  const validHandoff = {
+    node_id: "W1",
+    status: "complete",
+    candidates: [{ id: "ok" }],
+  };
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    maxCollectionRounds: 2,
+    maxIdlePolls: 2,
+    waitThreads: async () => ({
+      turns: [invalidHandoff, validHandoff],
+      afterCursor: 1,
+    }),
+    validateHandoff: (handoff) =>
+      handoff === invalidHandoff ? ["missing field"] : [],
+  });
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.terminal, validHandoff);
+  assert.equal(result.invalidSightings.length, 1);
+  assert.deepEqual(result.invalidSightings[0].handoff, invalidHandoff);
+});
+
 test("accepts an explicit failed worker handoff even when schema validation would reject it", async () => {
   const failedHandoff = {
     node_id: "W1",
