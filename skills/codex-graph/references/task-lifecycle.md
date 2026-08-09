@@ -8,8 +8,21 @@ Inspect the active declarations for project listing and task creation.
 
 1. If the goal belongs to a saved Codex project, resolve the exact project path through the project-list tool.
 2. Match the exact path. Fail closed on no match or more than one match.
-3. Use `target: { type: "project", projectId, environment: { type: "local" } }` only when every node is strictly read-only.
-4. Use the saved project with a worktree environment when any node can write. Give concurrent writers disjoint scopes.
+3. Choose the task **environment per node**, not once for the whole graph:
+   - Read-only nodes (research, discovery, audit/read lenses) use
+     `target: { type: "project", projectId, environment: { type: "local" } }`.
+   - Nodes that write repository files use
+     `target: { type: "project", projectId, environment: { type: "worktree" } }`
+     with disjoint write scopes for concurrent writers.
+   - Never apply `worktree` globally because one writer exists. Observed
+     Lisbon dogfood v4: research workers created with worktree returned only
+     `clientThreadId`, never resolved within a chat-scale bound, and blocked
+     before collection while v3's `local` research workers got ready
+     `threadId`s immediately.
+4. Prefer the root orchestrator (or a single integration owner on `local` /
+   the real project checkout) for final user-facing artifacts such as report
+   files in the project root. Do not strand publication writes only inside a
+   disposable worker worktree.
 5. Use a projectless target only when no saved project applies or the user explicitly requests it.
 
 Keep the resolved project ID in the workflow result. Do not use a generated directory as the identity of a saved-project task.
@@ -56,31 +69,57 @@ pending setup can still resolve within the named bound, and never create a
 replacement task while the original setup can still resolve. Prefer `title`;
 while a project task is loading, Codex can temporarily put the
 requested title in `summary`. Accept it only when it contains the same exact unique run
-tag, and the project ID also matches when one exists. Copy the ready thread and host IDs into
+tag. When a project is bound, prefer an exact `projectId` match, but while
+setup is still loading allow the same unique run tag in `title`/`summary`
+even if `projectId` is not yet present on the list row (Lisbon v4: list
+matching that *required* projectId during worktree setup never resolved).
+When the list or create payload exposes `clientThreadId` (or equivalent), also
+correlate the pending handle by that ID. Copy the ready thread and host IDs into
 the existing handle.
 
-```javascript
-const START_RESOLVE_ATTEMPTS = 30;
-const START_RESOLVE_DELAY_MS = 1000;
+Use a **chat-scale** bound for local/projectless starts (for example 30×1s or
+60×2s). Use a **provisioning-scale** bound when the node uses a worktree
+environment (worktree creation alone can exceed two minutes). Name both
+constants in the script.
 
-function findExactThread(value, projectId, runTag) {
+```javascript
+// Chat-scale default for local / projectless. Raise for worktree nodes.
+const START_RESOLVE_ATTEMPTS = handle.environment === "worktree" ? 90 : 30;
+const START_RESOLVE_DELAY_MS = handle.environment === "worktree" ? 2000 : 1000;
+
+function findExactThread(value, projectId, runTag, clientThreadId) {
   if (typeof value === "string") {
     try {
-      return findExactThread(JSON.parse(value), projectId, runTag);
+      return findExactThread(JSON.parse(value), projectId, runTag, clientThreadId);
     } catch {
       return null;
     }
   }
   if (!value || typeof value !== "object") return null;
+  const listedClient =
+    value.clientThreadId ?? value.client_thread_id ?? null;
+  if (
+    clientThreadId &&
+    listedClient &&
+    String(listedClient) === String(clientThreadId)
+  ) {
+    return value;
+  }
   // Projectless handles have no projectId; match the unique run tag alone.
-  // When a project is bound, require an exact projectId match as well.
-  const projectRequired = projectId != null && projectId !== "";
-  const sameProject = !projectRequired || value.projectId === projectId;
+  // When a project is bound, prefer projectId match but do not require it
+  // while setup is still loading (projectId may be absent on early list rows).
   const title = typeof value.title === "string" ? value.title : "";
   const summary = typeof value.summary === "string" ? value.summary : "";
-  if (sameProject && (title.includes(runTag) || summary.includes(runTag))) return value;
+  const tagHit = title.includes(runTag) || summary.includes(runTag);
+  if (tagHit) {
+    const projectRequired = projectId != null && projectId !== "";
+    const listedProject = value.projectId ?? value.project_id;
+    if (!projectRequired || listedProject == null || listedProject === projectId) {
+      return value;
+    }
+  }
   for (const nested of Object.values(value)) {
-    const found = findExactThread(nested, projectId, runTag);
+    const found = findExactThread(nested, projectId, runTag, clientThreadId);
     if (found) return found;
   }
   return null;
@@ -88,7 +127,12 @@ function findExactThread(value, projectId, runTag) {
 
 for (let attempt = 1; !handle.thread_id && attempt <= START_RESOLVE_ATTEMPTS; attempt += 1) {
   const snapshot = await listThreads({ limit: 50 });
-  const record = findExactThread(snapshot, handle.project_id, handle.run_tag);
+  const record = findExactThread(
+    snapshot,
+    handle.project_id,
+    handle.run_tag,
+    handle.client_thread_id,
+  );
   if (record) {
     handle.thread_id = findString(record, ["threadId", "thread_id", "id"]);
     handle.host_id = findString(record, ["hostId", "host_id"]);

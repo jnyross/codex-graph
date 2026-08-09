@@ -193,7 +193,7 @@ Code Mode tool availability and names can vary by client, version, configuration
 5. Derive arguments from the exposed declaration. Account for version differences such as `task_name`, `fork_turns`, or `fork_context` only when those fields are actually supported.
 6. If required agent tools are unavailable, the script must emit a structured `blocked` result listing the missing capabilities and exit successfully without attempting substitute mutations.
 7. Outside the script, include a direct-subagent fallback that preserves the same graph for clients without Code Mode. The fallback is not permission to omit the script.
-8. When the goal belongs to a saved Codex project, resolve its exact path through the project-list tool before task creation. Use the saved project with a local environment for a strictly read-only graph and isolated worktrees for any graph that can write. Use a projectless target only when no saved project applies or the user explicitly requests it.
+8. When the goal belongs to a saved Codex project, resolve its exact path through the project-list tool before task creation. Choose the task environment **per node**: read-only nodes use a local environment; nodes that write repository files use isolated worktrees. Never apply worktree to every node because one writer exists. Prefer root-orchestrator writes for final project-root artifacts. Use a projectless target only when no saved project applies or the user explicitly requests it.
 
 ### Graph-to-script parity
 
@@ -238,7 +238,7 @@ Every Mermaid node must map to an executable JavaScript stage, explicit gate, or
 5. Keep dependencies, adaptive decisions, approvals, waits, overlapping writes, synthesis, integration, and repair sequential.
 6. Use the concurrency supported by the active tools and task. Add a cap or
    staged fan-in only when a tool, runtime, or observed workload requires it.
-7. Treat task creation as a lifecycle, not one response. Preserve the complete setup result, ready `threadId`, pending `clientThreadId`, `hostId`, exact project ID, unique run tag and title, and node ID. Resolve pending setup through bounded task-list polling. Match the exact project ID plus the unique run tag in `title`; while setup is loading, also allow the same exact tag in `summary`.
+7. Treat task creation as a lifecycle, not one response. Preserve the complete setup result, ready `threadId`, pending `clientThreadId`, `hostId`, exact project ID, unique run tag and title, and node ID. Resolve pending setup through bounded task-list polling (chat-scale for local, provisioning-scale for worktree). Match the unique run tag in `title` or `summary`; prefer project ID when present but do not require it while setup is still loading; correlate by `clientThreadId` when the list exposes it.
 8. Wait for declared completion before consuming a handoff. A wait timeout is
    an observation point, not proof of failure. Use the active tool's wait
    semantics; add a deadline or polling cap only when the operation could
@@ -465,7 +465,7 @@ Before returning the paired deliverable, verify all of the following:
 - Required tools are discovered or bound from actual exposed metadata; no tool APIs are invented.
 - Integration ownership, fail-closed behavior, and the one-repair rule are encoded in code; concurrency caps are added only when justified by active tools or observations.
 - Validator decisions are machine-readable and malformed decisions fail closed.
-- Saved-project graphs resolve and preserve the exact project ID; read-only tasks use local and writing tasks use worktrees.
+- Saved-project graphs resolve and preserve the exact project ID; per-node environment: read-only tasks use local and writing tasks use worktrees (never global worktree for one writer).
 - Self-testing freezes acceptance before the child starts, accepts only explicit child evidence, records observed roadmap items, and uses at most one root-cause repair and re-run.
 - Pending setup handles are retained and resolved; wait timeouts are checked against fresh task state.
 - Early-returning wait tools cannot consume the full collection budget in a tight loop.

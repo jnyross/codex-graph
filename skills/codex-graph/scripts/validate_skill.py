@@ -175,6 +175,8 @@ def main() -> None:
         "complete and reachable",
         "Many files \u2260 parallel",
         "graph_coherence.py",
+        "per node",
+        "provisioning-scale",
     ]:
         if required_phrase not in text:
             fail(f"missing required behavior: {required_phrase}")
@@ -206,7 +208,11 @@ def main() -> None:
     
         "completed upstream handoff",
         "Read first, then wait",
-        "Read again after every wait",]:
+        "Read again after every wait",
+        "environment per node",
+        "provisioning-scale",
+        "clientThreadId",
+    ]:
         if required_phrase not in lifecycle:
             fail(f"task lifecycle reference is missing: {required_phrase}")
 
@@ -247,6 +253,9 @@ def main() -> None:
         "Scope worker prompts to node-local obligations",
         "mid-graph worker",
         "Your only obligation is the",
+        "per node",
+        "Never apply `worktree` to every node",
+        "provisioning-scale",
     ]:
         if required_phrase not in patterns:
             fail(f"code patterns are missing verified graph lesson: {required_phrase}")
