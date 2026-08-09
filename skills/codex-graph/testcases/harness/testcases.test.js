@@ -328,3 +328,65 @@ test("mentioning clientThreadId without a resolution loop fails (#14)", () => {
   assert.equal(check.ok, false);
   assert.match(check.detail, /no resolution-loop evidence/);
 });
+
+test("mixed wrapper collector (direct wait, helper reads) passes ordering (#13)", () => {
+  // frozen-lisbon-v4 shape: reads go through a resolved helper while the
+  // wait is a direct call site. Genuine read -> wait -> read must pass.
+  const script = [
+    "async function readFor(h) { const r = await readThread.call({ threadId: h }); return r; }",
+    "async function collectOne(h) {",
+    "  let out = await readFor(h);",
+    "  while (!out) {",
+    "    const w = await waitThreads.call({ targets: [h] });",
+    "    out = await readFor(h);",
+    "  }",
+    "  return out;",
+    "}",
+  ].join("\n");
+  const verdict = checkWorkflowText(script, {
+    case_id: "x",
+    collection: { read_first: true, read_after_wait: true },
+  });
+  assert.equal(verdict.ok, true, JSON.stringify(verdict.checks));
+});
+
+test("genuinely wait-first mixed wrapper script still fails read-first (#13)", () => {
+  // Same helper shape, but the first call site is the wait and the read
+  // helper is declared below it: the defect must keep failing.
+  const script = [
+    "async function run(h) {",
+    "  const w = await waitThreads.call({ targets: [h] });",
+    "  const out = await readFor(h);",
+    "  return out;",
+    "}",
+    "async function readFor(h) { const r = await readThread.call({ threadId: h }); return r; }",
+  ].join("\n");
+  const verdict = checkWorkflowText(script, {
+    case_id: "x",
+    collection: { read_first: true },
+  });
+  const check = verdict.checks.find((c) => c.id === "collection:read-first");
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /wait-only/);
+});
+
+test("call-free stub fails when collection is declared", () => {
+  // Comment-only stub that satisfies every marker textually but never
+  // calls a tool: the ordering carve-out must not green-light it.
+  const { expectations } = loadCase("sealed-pov-factcheck");
+  const script = [
+    "// N1 N2A N2B N2C V1A V1B V1C G1 T1",
+    "// Promise.allSettled UNVERIFIABLE",
+    '// environment type: "local"',
+    "// maxOutputCharsPerItem: 20000",
+    "// terminalEmitted",
+  ].join("\n");
+  const verdict = checkWorkflowText(script, expectations);
+  assert.equal(verdict.ok, false);
+  const failed = verdict.checks.filter((c) => !c.ok);
+  assert.deepEqual(
+    failed.map((c) => c.id),
+    ["collection:call-sites"],
+  );
+  assert.match(failed[0].detail, /no tool call sites/);
+});

@@ -6,6 +6,7 @@ All notable product releases are documented here.
 
 - fix: choose task environment per node (local for read-only, worktree only for writers) and strengthen pending `clientThreadId` resolution (Lisbon dogfood v4)
 - feat: dynamic-workflow golden test cases under `skills/codex-graph/testcases/` — six case bundles derived from real Grok Rhai and Claude multi-agent orchestration shapes (atomic screen fan-out, slice generators, sealed POV + adversarial fact-check, non-binding synthesis, dual validation, disjoint worktree writers), an offline expectations checker (`harness/`), pattern-derived collection tests, and catalog research in `docs/dynamic-workflow-testcase-catalog.md`; both regression runners now execute the new suite and lint the topology hints
+- fix: expectations checker resolves read/wait helper names as call sites so mixed wrapper collectors (direct wait, helper-bound reads) are judged correctly instead of false-failing `read-after-wait`, and declaring `collection` now requires at least one resolved call site so a call-free stub can no longer pass via the ordering carve-out
 
 ## [0.5.1] - 2026-08-09
 

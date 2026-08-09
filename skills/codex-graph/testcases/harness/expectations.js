@@ -32,9 +32,16 @@ const KNOWN_EXPECTATION_KEYS = new Set([
 // Await-adjacent tool call sites. Generated scripts bind read/wait tools
 // under names containing these stems regardless of client namespace; the
 // `await` prefix restricts matching to call sites so that parameter lists,
-// bindings, and comments cannot influence ordering verdicts.
-const AWAIT_READ_CALL_RE = /await\s+[\w.$]*read_?[Tt]hread[\w$]*|await\s+[\w.$]*read_?[Tt]ask[\w$]*/;
-const AWAIT_WAIT_CALL_RE = /await\s+[\w.$]*wait_?[Tt]hread[\w$]*|await\s+[\w.$]*wait_?[Tt]ask[\w$]*/;
+// bindings, and comments cannot influence ordering verdicts. Helper names
+// bound to a tool (const readFor = ... readThread ..., or a function whose
+// nearby body references the tool) are resolved as call sites too, so mixed
+// collectors that reach one tool through a wrapper are judged correctly.
+const READ_STEM_RE = /read_?[Tt]hread|read_?[Tt]ask/;
+const WAIT_STEM_RE = /wait_?[Tt]hread|wait_?[Tt]ask/;
+const READ_STEM_SOURCE = "read_?[Tt]hread[\\w$]*|read_?[Tt]ask[\\w$]*";
+const WAIT_STEM_SOURCE = "wait_?[Tt]hread[\\w$]*|wait_?[Tt]ask[\\w$]*";
+// Bounded window for judging a function helper's body without an AST.
+const FN_HELPER_WINDOW = 500;
 const LOCAL_ENV_RE = /type\s*:\s*["']local["']/g;
 const WORKTREE_ENV_RE = /type\s*:\s*["']worktree["']/g;
 const ITEM_BUDGET_RE =
@@ -42,6 +49,47 @@ const ITEM_BUDGET_RE =
 
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function collectHelperNames(scriptText, stemRe) {
+  const names = new Set();
+  // Single-line bindings: judge only the declaration's own line so that a
+  // neighbouring declaration cannot bleed its tool name into this one, and
+  // require a function-like right-hand side (arrow, function keyword, tool
+  // binding, or bind) — `const readResult = await readThread.call(...)`
+  // stores a result and is not a callable helper.
+  for (const m of scriptText.matchAll(
+    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=([^\n]*)/g,
+  )) {
+    if (
+      stemRe.test(m[2]) &&
+      /=>|\bfunction\b|resolveTool|\.bind\s*\(/.test(m[2])
+    ) {
+      names.add(m[1]);
+    }
+  }
+  // Function helpers: judge a bounded body window, cut at the next
+  // top-level declaration so a small helper cannot inherit its
+  // neighbour's tool references.
+  for (const m of scriptText.matchAll(
+    /(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g,
+  )) {
+    let window = scriptText.slice(m.index, m.index + FN_HELPER_WINDOW);
+    const nextDecl = window
+      .slice(1)
+      .search(/\n(?:async\s+function\s|function\s|const\s|let\s|var\s)/);
+    if (nextDecl !== -1) window = window.slice(0, nextDecl + 1);
+    if (stemRe.test(window)) names.add(m[1]);
+  }
+  return names;
+}
+
+function buildAwaitCallRe(stemSource, helperNames) {
+  const parts = [
+    stemSource,
+    ...[...helperNames].map((name) => `${escapeRegExp(name)}\\b`),
+  ];
+  return new RegExp(`await\\s+[\\w.$]*(?:${parts.join("|")})`);
 }
 
 function extractExpectations(markdown) {
@@ -169,51 +217,62 @@ function checkWorkflowText(scriptText, expectations) {
 
   const collection = expectations.collection;
   if (collection) {
-    // Await-adjacent call sites only: parameter lists, tool bindings, and
-    // comments mention these names without `await`, so declaration order
-    // cannot flip the verdict (observed: a 2-line parameter rename flipped
-    // the frozen-lisbon-v3 verdict under first-mention matching). A collector
-    // that reaches the tools only through wrapper helpers has no direct call
-    // sites and is not judged — but only when the script still binds those
-    // tools. Completely absent collection must fail (#13).
-    const firstRead = scriptText.search(AWAIT_READ_CALL_RE);
-    const firstWait = scriptText.search(AWAIT_WAIT_CALL_RE);
-    const bindsCollectionTools =
-      /read_?[Tt]hread|readTask|read_task|wait_?[Tt]hread|waitTask|wait_task/.test(
-        scriptText,
-      );
+    // Ordering is judged on await-adjacent call sites: parameter lists,
+    // bindings, and comments mention tool names without `await`, so
+    // declaration order cannot flip the verdict (observed: a 2-line
+    // parameter rename flipped the frozen-lisbon-v3 verdict under
+    // first-mention matching). Helper names bound to exactly one of the two
+    // tools count as call sites for that tool; a helper touching both (a
+    // whole collection loop) is ambiguous and votes for neither. A contract
+    // that declares collection expectations requires at least one resolved
+    // call site — a call-free script must not sail through the ordering
+    // carve-out (observed: a comment-only stub passed every check).
+    const readHelpers = collectHelperNames(scriptText, READ_STEM_RE);
+    const waitHelpers = collectHelperNames(scriptText, WAIT_STEM_RE);
+    const unambiguousRead = [...readHelpers].filter(
+      (name) => !waitHelpers.has(name),
+    );
+    const unambiguousWait = [...waitHelpers].filter(
+      (name) => !readHelpers.has(name),
+    );
+    const readCallRe = buildAwaitCallRe(READ_STEM_SOURCE, unambiguousRead);
+    const waitCallRe = buildAwaitCallRe(WAIT_STEM_SOURCE, unambiguousWait);
+    const firstRead = scriptText.search(readCallRe);
+    const firstWait = scriptText.search(waitCallRe);
+    const hasCallSites = firstRead !== -1 || firstWait !== -1;
+    add(
+      "collection:call-sites",
+      hasCallSites,
+      hasCallSites
+        ? "await-adjacent tool or resolved helper call sites present"
+        : "collection declared but no tool call sites",
+    );
     if (collection.read_first) {
       let ok;
       let detail;
       if (firstWait === -1 && firstRead === -1) {
-        ok = bindsCollectionTools;
-        detail = bindsCollectionTools
-          ? "no await-adjacent tool calls; wrapper-based collector not judged"
-          : "no await-adjacent read/wait calls and no tool bindings (missing collection, #13)";
+        ok = true;
+        detail =
+          "no resolved call sites; ordering not judged (call-site check governs)";
       } else if (firstWait === -1) {
         ok = true;
-        detail = "await-adjacent read call present and no direct wait call";
+        detail = "read call present and no direct or resolved wait call";
       } else {
         ok = firstRead !== -1 && firstRead < firstWait;
         detail = ok
-          ? "await-adjacent read call precedes the first wait call"
-          : "first await-adjacent wait call precedes any read call (wait-only collection, #13)";
+          ? "read call site precedes the first wait call site"
+          : "first wait call site precedes any read call site (wait-only collection, #13)";
       }
       add("collection:read-first", ok, detail);
     }
     if (collection.read_after_wait) {
       let ok = true;
-      let detail = "no await-adjacent wait call; nothing to follow";
+      let detail = "no wait call site; nothing to follow";
       if (firstWait !== -1) {
-        ok = AWAIT_READ_CALL_RE.test(scriptText.slice(firstWait));
+        ok = readCallRe.test(scriptText.slice(firstWait));
         detail = ok
-          ? "await-adjacent read call after the first wait"
-          : "no read call after the first wait (#13)";
-      } else if (firstRead === -1) {
-        ok = bindsCollectionTools;
-        detail = bindsCollectionTools
-          ? "no await-adjacent tool calls; wrapper-based collector not judged"
-          : "no await-adjacent read/wait calls and no tool bindings (missing collection, #13)";
+          ? "read call site after the first wait"
+          : "no read call site after the first wait (#13)";
       }
       add("collection:read-after-wait", ok, detail);
     }
