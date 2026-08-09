@@ -57,15 +57,14 @@ python3 skills/codex-graph/scripts/graph_coherence.py < diagram.mmd
 ```
 
 On macOS and Linux, run the full regression suite (validator, graph-coherence
-selfcheck, task-collection suite, and release automation tests) with:
+selfcheck, task-collection suite, dynamic-workflow test cases with topology-hint
+lint, and release automation tests) with:
 
 ```bash
 ./scripts/run_regressions.sh
 ```
 
-On Windows, run the full regression suite (validator, graph-coherence
-selfcheck, task-collection suite, and release automation tests) from Codex
-Desktop's terminal:
+On Windows, run the same regression suite from Codex Desktop's terminal:
 
 ```powershell
 .\scripts\run_windows_regressions.ps1
@@ -74,14 +73,34 @@ Desktop's terminal:
 The regression suite uses only Node's built-in test runner and simulates the
 active task tool. It covers cursor forwarding, cursorless snapshot
 deduplication, the 20,000-character item limit, delayed completion, bounded
-stall handling, and schema-valid terminal handoffs.
+stall handling, schema-valid terminal handoffs, and pattern-derived collection
+scenarios (atomic screen fan-out, staged cardinality, adversarial dual
+validation).
+
+### Dynamic-workflow test cases
+
+`skills/codex-graph/testcases/` holds six golden cases derived from real
+orchestration shapes. Each case bundles a synthetic `GOAL.md`, a
+machine-checkable `EXPECTATIONS.md`, and a `topology.hint.mmd`, plus an
+offline harness that can statically check a generated `workflow.js` against a
+case:
+
+```bash
+node skills/codex-graph/testcases/harness/check_workflow.js \
+  --case atomic-screen-fanout --script /path/to/workflow.js
+```
+
+See `skills/codex-graph/testcases/README.md` for the expectation semantics and
+`docs/dynamic-workflow-testcase-catalog.md` for the source survey, shape
+analysis, and tier/contract mapping behind the cases.
 
 ## Add regression coverage with new features
 
 Every pull request runs the Windows suite automatically. When a feature
 changes orchestration behavior, add a scenario to
-`skills/codex-graph/scripts/task_collection_harness.test.js` before opening
-the pull request. The pull request template records the Windows command and
+`skills/codex-graph/scripts/task_collection_harness.test.js` or a golden case
+under `skills/codex-graph/testcases/cases/` before opening the pull request.
+The pull request template records the Windows command and
 requires either a named regression case or an explanation for a documentation-
 only change.
 
@@ -109,6 +128,8 @@ the workflow to prevent loops. Use conventional commit subjects such as
 - `skills/codex-graph/references/progressive-complexity.md` — authoritative L0-L4 escalation ladder
 - `skills/codex-graph/references/self-testing.md` — candidate packaging, child-thread validation, roadmap capture, and bounded repair
 - `skills/codex-graph/scripts/validate_skill.py` — structural and contract checks
+- `skills/codex-graph/testcases/` — dynamic-workflow golden test cases (`cases/<id>/`, `catalog.json`, offline expectations harness)
+- `docs/dynamic-workflow-testcase-catalog.md` — source survey and tier/contract mapping behind the test cases
 
 ## Status
 
