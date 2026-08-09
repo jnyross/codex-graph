@@ -63,8 +63,9 @@ selfcheck, task-collection suite, and release automation tests) with:
 ./scripts/run_regressions.sh
 ```
 
-On Windows, run the validator, graph-coherence linter, and task-collection
-regression suite from Codex Desktop's terminal:
+On Windows, run the full regression suite (validator, graph-coherence
+selfcheck, task-collection suite, and release automation tests) from Codex
+Desktop's terminal:
 
 ```powershell
 .\scripts\run_windows_regressions.ps1
