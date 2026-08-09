@@ -93,7 +93,10 @@ requested title in `summary` — keep both keys too. Prefer `name`/`title`
 titles, so accept a preview-only hit just as a second-pass fallback, and
 never match a row whose thread id is the orchestrator's own (or parent)
 thread id, when that id is known. Keep the key list explicit;
-never add a bare `id` fallback to list matching.
+never add a bare `id` fallback to list matching. Extracting the thread id
+from an already-matched row is different: open-source rows carry the thread
+id under `id`, so `id` is a valid extraction key once the row has matched —
+after the match, never to make it.
 
 A shared graph tag alone is not sufficient: with concurrent pending workers,
 a shared-tag hit can bind two handles to the same thread or to each other's
@@ -109,18 +112,24 @@ during worktree setup never resolved). When the list or create payload
 exposes `clientThreadId` (or equivalent), also correlate the pending handle
 by that ID. Copy the ready thread and host IDs into the existing handle.
 
-Use a **chat-scale** bound for local/projectless starts (for example 30×1s or
-60×2s). Use a **provisioning-scale** bound when the node uses a worktree
-environment (worktree creation alone can exceed two minutes). Name both
-constants in the script.
+Resolve bounds are per node. Use a **chat-scale** bound for local or
+projectless starts (for example 30×1s or 60×2s) and a **provisioning-scale**
+bound when that node uses a worktree environment (worktree creation alone can
+exceed two minutes). Derive the bound from the handle, never from one
+graph-wide constant, and resolve pending setups concurrently with
+`Promise.allSettled` so a provisioning-scale bound is never summed across
+nodes.
 
 ```javascript
-// Chat-scale default for local / projectless. Raise for worktree nodes.
-const isWorktree = handle.environment?.type === "worktree";
-const START_RESOLVE_ATTEMPTS = isWorktree ? 90 : 30;
-const START_RESOLVE_DELAY_MS = isWorktree ? 2000 : 1000;
-// Never adopt the orchestrator's own (or parent) thread, or a thread already
-// claimed by another handle. Share one set across every pending resolution.
+// Bounds are per node. Never hoist one bound for the whole graph.
+function resolveBounds(handle) {
+  const worktree = handle.environment?.type === "worktree";
+  return { attempts: worktree ? 90 : 30, delayMs: worktree ? 2000 : 1000 };
+}
+
+// Claims are the opposite of bounds: one set shared across every pending
+// resolution. Never adopt the orchestrator's own (or parent) thread, or a
+// thread already claimed by another handle.
 const CLAIMED_THREAD_IDS = new Set([ownThreadId].filter(Boolean).map(String));
 
 function findExactThread(value, projectId, runTag, nodeId, clientThreadId, excludeThreadIds = []) {
@@ -181,7 +190,9 @@ function findExactThread(value, projectId, runTag, nodeId, clientThreadId, exclu
   return walk(value, false) ?? walk(value, true);
 }
 
-for (let attempt = 1; !handle.thread_id && attempt <= START_RESOLVE_ATTEMPTS; attempt += 1) {
+const { attempts, delayMs } = resolveBounds(handle);
+
+for (let attempt = 1; !handle.thread_id && attempt <= attempts; attempt += 1) {
   const snapshot = await listThreads({ limit: 50 });
   const record = findExactThread(
     snapshot,
@@ -192,13 +203,15 @@ for (let attempt = 1; !handle.thread_id && attempt <= START_RESOLVE_ATTEMPTS; at
     CLAIMED_THREAD_IDS,
   );
   if (record) {
+    // Extraction from a matched row may read `id` (open-source rows carry
+    // the thread id there). Matching itself never falls back to bare `id`.
     handle.thread_id = findString(record, ["threadId", "thread_id", "id"]);
     handle.host_id = findString(record, ["hostId", "host_id"]);
     handle.state = handle.thread_id ? "active" : "pending_setup";
     if (handle.thread_id) CLAIMED_THREAD_IDS.add(String(handle.thread_id));
   }
-  if (!handle.thread_id && attempt < START_RESOLVE_ATTEMPTS) {
-    await new Promise((resolve) => setTimeout(resolve, START_RESOLVE_DELAY_MS));
+  if (!handle.thread_id && attempt < attempts) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 }
 ```
@@ -383,7 +396,8 @@ Validate each active handle before use:
 - project ID and host ID match the current resolved target;
 - model and reasoning policy match the node contract;
 - a ready task ID exists;
-- the task title or summary contains the expected unique run tag.
+- the row's `name`/`title`/`summary`/`preview` contains the bracketed exact
+  run tag `[<runTag>]` together with the node id.
 
 Add the validated handle to the live-handle registry and collect it. Do not call the create tool for that active node. Reject a stale, ambiguous, or policy-mismatched handle with its exact reason. Do not require or fabricate handles for not-started nodes.
 

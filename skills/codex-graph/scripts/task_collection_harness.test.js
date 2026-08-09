@@ -486,7 +486,7 @@ test("resolves via preview only as a second-pass fallback", () => {
 test("requires the bracketed exact run-tag form", () => {
   const runTag = "lisbon-family-1786287437517-N2D";
   const snapshot = {
-    threads: [{ id: "t-1", name: `retry ${runTag} later`, status: "ready" }],
+    threads: [{ id: "t-1", title: `retry ${runTag} later`, status: "ready" }],
   };
   assert.equal(findExactThread(snapshot, null, runTag, "N2D", null), null);
 });
