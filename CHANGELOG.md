@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## [0.4.4] - 2026-08-09
+
+- fix: collect handoffs when workers finish before wait sees them (#13)
+
 ## [0.4.3] - 2026-08-09
 
 - fix: scope mid-graph worker prompts to node-local obligations (#12)
