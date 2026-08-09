@@ -203,7 +203,8 @@ def main() -> None:
         "`not_started`",
         "task-specific deadline",
         "active-tool limit or observed condition",
-    ]:
+    
+        "completed upstream handoff",]:
         if required_phrase not in lifecycle:
             fail(f"task lifecycle reference is missing: {required_phrase}")
 
@@ -241,6 +242,9 @@ def main() -> None:
         "Keep prerequisite artifacts outside the graph",
         "separate artifact lifecycle",
         "stable references to prerequisite artifacts",
+        "Scope worker prompts to node-local obligations",
+        "mid-graph worker",
+        "Your only obligation is the",
     ]:
         if required_phrase not in patterns:
             fail(f"code patterns are missing verified graph lesson: {required_phrase}")
