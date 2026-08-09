@@ -174,18 +174,25 @@ function checkWorkflowText(scriptText, expectations) {
     // cannot flip the verdict (observed: a 2-line parameter rename flipped
     // the frozen-lisbon-v3 verdict under first-mention matching). A collector
     // that reaches the tools only through wrapper helpers has no direct call
-    // sites and is not judged.
+    // sites and is not judged — but only when the script still binds those
+    // tools. Completely absent collection must fail (#13).
     const firstRead = scriptText.search(AWAIT_READ_CALL_RE);
     const firstWait = scriptText.search(AWAIT_WAIT_CALL_RE);
+    const bindsCollectionTools =
+      /read_?[Tt]hread|readTask|read_task|wait_?[Tt]hread|waitTask|wait_task/.test(
+        scriptText,
+      );
     if (collection.read_first) {
       let ok;
       let detail;
-      if (firstWait === -1) {
+      if (firstWait === -1 && firstRead === -1) {
+        ok = bindsCollectionTools;
+        detail = bindsCollectionTools
+          ? "no await-adjacent tool calls; wrapper-based collector not judged"
+          : "no await-adjacent read/wait calls and no tool bindings (missing collection, #13)";
+      } else if (firstWait === -1) {
         ok = true;
-        detail =
-          firstRead === -1
-            ? "no await-adjacent tool calls; wrapper-based collector not judged"
-            : "await-adjacent read call present and no direct wait call";
+        detail = "await-adjacent read call present and no direct wait call";
       } else {
         ok = firstRead !== -1 && firstRead < firstWait;
         detail = ok
@@ -202,6 +209,11 @@ function checkWorkflowText(scriptText, expectations) {
         detail = ok
           ? "await-adjacent read call after the first wait"
           : "no read call after the first wait (#13)";
+      } else if (firstRead === -1) {
+        ok = bindsCollectionTools;
+        detail = bindsCollectionTools
+          ? "no await-adjacent tool calls; wrapper-based collector not judged"
+          : "no await-adjacent read/wait calls and no tool bindings (missing collection, #13)";
       }
       add("collection:read-after-wait", ok, detail);
     }
