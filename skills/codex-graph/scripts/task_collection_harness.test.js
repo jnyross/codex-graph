@@ -8,6 +8,7 @@ const {
   normalizeToolResult,
   aggregateStartFailure,
   canonicalUrlForComparison,
+  findHandoffInValue,
 } = require("./task_collection_harness.js");
 
 function sequenceWaiter(snapshots) {
@@ -189,4 +190,77 @@ test("normalizes HTML entities before URL comparison", () => {
   assert.equal(canonicalUrlForComparison(hex), plain);
   assert.equal(canonicalUrlForComparison(plain), plain);
   assert.equal(canonicalUrlForComparison(null), null);
+});
+
+
+test("findHandoffInValue digs nested turns/items and string JSON", () => {
+  const handoff = {
+    node_id: "N2A",
+    status: "complete",
+    candidates: [{ id: "a" }],
+  };
+  const nested = {
+    turns: [
+      {
+        items: [
+          { type: "text", text: "noise" },
+          { type: "output", content: JSON.stringify(handoff) },
+        ],
+      },
+    ],
+  };
+  assert.deepEqual(findHandoffInValue(nested, "N2A").node_id, "N2A");
+  assert.equal(findHandoffInValue(nested, "N2A").status, "complete");
+});
+
+test("collects handoff when thread is already complete on first read", async () => {
+  const handoff = {
+    node_id: "N2A",
+    status: "complete",
+    candidates: [{ id: "N2A-01", name: "Park" }],
+  };
+  let waits = 0;
+  const result = await collectTask({
+    nodeId: "N2A",
+    threadId: "thread-done",
+    waitThreads: async () => {
+      waits += 1;
+      return { items: [] };
+    },
+    readThread: async () => ({
+      status: "idle",
+      turns: [{ items: [{ type: "message", text: JSON.stringify(handoff) }] }],
+    }),
+  });
+  assert.equal(waits, 0, "must not wait when first read already has handoff");
+  assert.equal(result.terminalEmitted, true);
+  assert.equal(result.status, "passed");
+  assert.equal(result.terminal.node_id, "N2A");
+  assert.equal(result.terminal.candidates.length, 1);
+});
+
+test("finds handoff via post-wait read when wait snapshot stays empty", async () => {
+  const handoff = {
+    node_id: "W1",
+    status: "complete",
+    candidates: [],
+  };
+  let reads = 0;
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    maxCollectionRounds: 3,
+    maxIdlePolls: 3,
+    waitThreads: async () => ({ items: [], terminal: null }),
+    readThread: async () => {
+      reads += 1;
+      if (reads < 2) return { items: [] };
+      return {
+        turns: [{ items: [{ content: handoff }] }],
+      };
+    },
+  });
+  assert.equal(result.terminalEmitted, true);
+  assert.equal(result.terminal.status, "complete");
+  assert.ok(reads >= 2);
 });

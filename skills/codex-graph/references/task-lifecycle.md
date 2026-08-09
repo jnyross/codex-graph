@@ -112,21 +112,32 @@ behavior; do not copy a universal timeout or attempt count.
 
 For each collection round:
 
-1. Call the wait tool with the ready `threadId` and `hostId` when required.
-2. Read the newest task turn with the tool's supported item limit. For the
-   current task-read declaration, use at most `20000` for
-   `maxOutputCharsPerItem`; never request a larger value unless the active
-   declaration explicitly allows it.
-3. Pass the returned pagination cursor (for example, `afterCursor`) into the
+1. **Read first, then wait.** On the first collection for a handle, call the
+   task-read tool **before** the first wait. The worker may already be idle
+   with a complete handoff; wait-only loops can sit on empty snapshots for the
+   entire budget (observed: Lisbon dogfood v3 — workers finished in ~161s with
+   valid JSON, root reported `rounds=1, idle=15` over 30 minutes and blocked).
+2. Call the wait tool with the ready `threadId` and `hostId` when required.
+3. **Read again after every wait.** Do not treat the wait payload as the only
+   source of items or handoffs. Wait may return no new cursor while
+   `read_thread` already has the terminal turn.
+4. Use at most `20000` for `maxOutputCharsPerItem` on the current task-read
+   declaration unless the active declaration explicitly allows more.
+5. Pass the returned pagination cursor (for example, `afterCursor`) into the
    next read or wait call when the tool exposes one. A repeated snapshot with
    no new cursor is not a new collection round and must not consume the
-   collection budget.
-4. Detect an explicit failed or interrupted terminal turn.
-5. Recursively inspect `turns` and their structured `items` for the required JSON handoff.
-6. Accept the handoff only when its `node_id`, status, and task-specific schema match.
-7. Continue while the task is active or the handoff is not terminal. Stop only
-   at an active-tool failure, explicit terminal failure, or a task-specific
-   deadline introduced for an observed operational need.
+   collection budget — **unless** a concurrent read finds a new handoff.
+6. Detect an explicit failed or interrupted terminal turn.
+7. Recursively inspect `turns` and their structured `items` (and string JSON
+   inside text fields) for the required JSON handoff. Accept status values
+   `complete`, `passed`, `blocked`, or `failed` when they match the node
+   schema.
+8. Accept the handoff only when its `node_id`, status, and task-specific schema match.
+9. Continue while the task is active or the handoff is not terminal. Stop only
+   at an active-tool failure, explicit terminal failure, a collected terminal
+   handoff, or a task-specific deadline introduced for an observed operational
+   need. Do **not** stop solely because wait snapshots look idle if you have not
+   performed a recent full read.
 
 Do not assume output is one text field. Do not treat an unchanged wait snapshot as failure.
 
@@ -292,6 +303,8 @@ Before returning a generated graph script, check these cases against the active 
 - a wait call times out while the task remains active;
 - a wait call returns immediately and the fallback delay protects the wall-clock budget;
 - the final JSON is nested in structured `items`;
+- a worker already complete at first collection still yields a handoff via an initial read;
+- an empty wait snapshot still yields a handoff via a paired read_thread;
 - the read request stays within the item limit;
 - an oversized handoff uses an expansion queue or durable artifact;
 - a blocked result preserves every live handle and exact node error;

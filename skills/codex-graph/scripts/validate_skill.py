@@ -204,7 +204,9 @@ def main() -> None:
         "task-specific deadline",
         "active-tool limit or observed condition",
     
-        "completed upstream handoff",]:
+        "completed upstream handoff",
+        "Read first, then wait",
+        "Read again after every wait",]:
         if required_phrase not in lifecycle:
             fail(f"task lifecycle reference is missing: {required_phrase}")
 
