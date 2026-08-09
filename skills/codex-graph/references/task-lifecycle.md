@@ -226,7 +226,11 @@ On any blocked terminal result, include:
 - project ID and host ID;
 - title and state;
 - exact start, wait, read, parse, capacity, or schema error;
-- every still-live handle.
+- every still-live handle;
+- every **completed upstream handoff** already collected (compact schema-valid
+  objects), not only handles. Handles alone force re-reading threads to recover
+  research that finished before the block; preserve the handoffs in the
+  terminal so a later resume or critique can use them without duplicate work.
 
 If a fixed model is at capacity, keep the model policy. Permit one clean same-model retry only when the graph declares that operational retry. Give it a new run tag. Otherwise stop with the capacity error. Operational setup or capacity retries do not consume the artifact-repair allowance, but they must be explicit and bounded.
 

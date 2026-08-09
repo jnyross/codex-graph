@@ -257,7 +257,7 @@ If an aggregate join exceeds an observed transport limit, create staged validati
 
 ## Freeze one acceptance and schema contract
 
-Before workers start, declare the fixed scope or pilot size, selection rule, required record fields, audit thresholds, publication rule, and repair boundary. Give the same contract ID and values to discovery, integration, every audit lens, the root gate, repair, revalidation, and final formatting. Reject an audit result that invents a new cutoff or expands the fixed pilot.
+Before workers start, declare the fixed scope or pilot size, selection rule, required record fields, audit thresholds, publication rule, and repair boundary. Give the same **contract ID** and shared field definitions to discovery, integration, every audit lens, the root gate, repair, revalidation, and final formatting. Reject an audit result that invents a new cutoff or expands the fixed pilot. Do **not** paste publication rules, multi-lane audit requirements, or root-gate semantics into mid-graph worker prompts — those obligations stay with the nodes that own them (see "Worker prompt contract").
 
 Define one canonical record schema and validate it at every boundary. A repair worker can use a compact transport form only when the repair owner deterministically normalizes it back to the canonical schema before revalidation and formatting. Never let the formatter guess between object and array shapes or silently emit `null` fields.
 
@@ -389,14 +389,55 @@ There is no second repair branch. The caller converts this result into one termi
 
 Each node prompt should include:
 
-1. Overall objective and success criteria.
+1. Overall objective and success criteria **as context only** — not as obligations the worker must enforce for the whole graph.
 2. The node ID, purpose, and dependencies.
 3. Allowed read/write scope.
 4. Inputs or upstream handoffs.
-5. Required work and explicit non-goals.
+5. Required work and explicit non-goals for **this node only**.
 6. No nested delegation.
-7. Required structured handoff schema.
+7. Required structured handoff schema for **this node only**.
 8. A statement that the worker cannot declare the whole workflow complete.
+
+### Scope worker prompts to node-local obligations
+
+A mid-graph worker is a fresh Codex thread with **no DAG awareness**. If its
+prompt embeds the full acceptance contract (publication rule, audit-lane
+requirements, root-gate semantics, or later-node schemas), it will apply those
+downstream conditions to itself and self-block even when its own inputs are
+ready. Observed in the Lisbon family day-trip dogfood: synthesis received the
+full publication/audit contract, demanded audit-lane results that only exist
+**after** synthesis, returned `status: "blocked"` with zero candidates, and
+caused the root to fail closed while three research workers had already
+produced complete handoffs.
+
+**Rule:** give each mid-graph worker only its **node-scoped obligations** and
+handoff schema. Publication rules, multi-lane audit requirements, root-gate
+acceptance, and repair authority stay with the root orchestrator (and with
+nodes that own those steps). The fixed **contract ID** and shared field
+definitions may appear for vocabulary, but the worker must not be told that
+**publication** or **later audit lanes** are its success criteria.
+
+When building `node.prompt` (or equivalent spawn message), include an explicit
+scoping sentence, for example:
+
+> Your only obligation is the N3 output schema and the work listed for this
+> node. Publication, audit verdicts, and whole-workflow acceptance are owned
+> by later nodes and the root gate — do not require them here.
+
+Research and discovery workers: rank and evidence within their topic only.
+Synthesis/join workers: produce the canonical draft or join handoff from
+upstream complete handoffs; do not wait for audits that run after them.
+Audit workers: judge the draft they receive against declared criteria only.
+Root/gate/formatter: own publication and terminal write.
+
+### Anti-pattern (contract over-scoping)
+
+- Pasting the full acceptance contract, including publication rule and
+  audit-lane requirements, into every worker prompt.
+- Telling a synthesis node that "all audit lanes must pass" before it may
+  return a draft.
+- Letting a worker return `status: "blocked"` solely because a **later**
+  graph stage has not run yet.
 
 For a sole writer, add instructions to preserve uncommitted work, inspect applicable `AGENTS.md`, keep the diff small, and report exact changed paths and observed validation.
 
@@ -453,3 +494,4 @@ Do not call `exit()` inside the `try` block. Keep early-stop decisions as return
 - Using one broad validator when record batches or audit lenses can be checked independently.
 - Emitting only a success message without evidence.
 - Adding an orchestration framework or repository dependency for a temporary workflow.
+- Embedding the full publication rule or later-node audit requirements in a mid-graph worker prompt so the worker self-blocks before those stages run.

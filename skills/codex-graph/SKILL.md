@@ -225,7 +225,7 @@ The script must contain a compact `WORKFLOW` object or equivalent metadata with:
 - concurrency limit;
 - repair allowance.
 
-It must also declare one acceptance contract: the fixed scope or pilot size, selection rule, evidence fields, audit thresholds, publication rule, and repair boundary. Every worker, validator, gate, repair node, and formatter must use that same contract. A validator must not introduce a larger sample, new cutoff, or broader scope after execution starts.
+It must also declare one acceptance contract: the fixed scope or pilot size, selection rule, evidence fields, audit thresholds, publication rule, and repair boundary. Share the **contract ID** and shared field definitions with every worker, validator, gate, repair node, and formatter so vocabulary stays consistent. Do **not** paste publication rules, multi-lane audit requirements, or root-gate acceptance into mid-graph worker prompts — those obligations stay with the nodes that own them (see `code-mode-script-patterns.md`, "Worker prompt contract" / "Scope worker prompts to node-local obligations"). A validator must not introduce a larger sample, new cutoff, or broader scope after execution starts.
 
 Every Mermaid node must map to an executable JavaScript stage, explicit gate, or terminal state. Node IDs, dependencies, parallel groups, and terminal outcomes must agree across both parts. Do not add hidden workers or omit graph nodes in code.
 
