@@ -1,0 +1,8 @@
+flowchart TD
+    N1[Freeze slices quotas and seed list] --> N2A[Generate candidates for slice A]
+    N1 --> N2B[Generate candidates for slice B]
+    N1 --> N2C[Generate candidates for slice N]
+    N2A --> I1[Deterministic dedupe and merge under one owner]
+    N2B --> I1
+    N2C --> I1
+    I1 --> T1[Return merged pool with per-slice counts]

@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "description": "Machine index of dynamic-workflow golden test cases for the codex-graph skill. Derived from real Grok Rhai workflows and Claude multi-agent orchestration shapes; goals are synthetic and anonymized. See docs/dynamic-workflow-testcase-catalog.md for provenance.",
+  "cases": [
+    {
+      "id": "atomic-screen-fanout",
+      "title": "Atomic per-candidate screening fan-out with root-owned pool policy",
+      "domain": "consumer discovery research",
+      "task_family": "research or analysis",
+      "baseline_tier": "L2",
+      "source_shape": "Grok destination/hotel discovery screen phase: one candidate in, one verdict out; fail-open policy decided by the orchestrator",
+      "phases": ["freeze pool and gates", "parallel atomic screeners", "root pool policy join", "terminal"],
+      "fanout": "one read-only screener per candidate (representative width 3, real runs 24-100+)",
+      "join": "root applies verdicts and fail-open policy deterministically; workers never decide pool membership",
+      "validation": "hard gates only inside screeners; kill log preserved",
+      "contracts": ["#12", "#13"]
+    },
+    {
+      "id": "slice-generators-join",
+      "title": "Disjoint-slice generators joined by one integration owner",
+      "domain": "consumer discovery research",
+      "task_family": "research or analysis",
+      "baseline_tier": "L2",
+      "source_shape": "Grok atomic generators: one generator per region/archetype slice, orchestrator dedupes into one pool",
+      "phases": ["freeze slices and quotas", "parallel slice generators", "single-owner dedupe and merge", "terminal"],
+      "fanout": "one generator per declared disjoint slice",
+      "join": "one integration owner; deterministic exact-name dedupe in orchestration code, not in worker prompts",
+      "validation": "schema-shaped generator handoffs; malformed handoffs dropped with a logged reason",
+      "contracts": ["#11"]
+    },
+    {
+      "id": "sealed-pov-factcheck",
+      "title": "Sealed decision packs with adversarial per-pack fact-check",
+      "domain": "consumer discovery research",
+      "task_family": "research or analysis",
+      "baseline_tier": "L3",
+      "source_shape": "Grok sealed POV workers (no cross-candidate knowledge) each followed by one adversarial refuting fact-checker",
+      "phases": ["freeze contract", "parallel sealed pack builders", "parallel adversarial fact-checkers", "root acceptance gate", "terminal"],
+      "fanout": "one sealed researcher per item, then one fact-checker per pack",
+      "join": "root gate; a missing or failed fact-check marks claims UNVERIFIABLE, never confirmed",
+      "validation": "adversarial evidence lanes fail closed; full packs preserved in a durable artifact with compact handoffs",
+      "contracts": ["#12", "#13"]
+    },
+    {
+      "id": "nonbinding-synthesis-gate",
+      "title": "Non-binding synthesis with root-owned acceptance (human ranks)",
+      "domain": "research synthesis",
+      "task_family": "research or analysis",
+      "baseline_tier": "L3",
+      "source_shape": "Grok light synthesis: matrix plus provisional thoughts, winners forbidden; inverse of the Lisbon synthesis self-block defect",
+      "phases": ["freeze contract", "parallel topic collectors", "non-binding synthesizer", "parallel audit lenses", "root acceptance gate", "terminal"],
+      "fanout": "topic collectors, then read-only audit lenses after synthesis",
+      "join": "root gate owns acceptance; synthesizer returns a draft and must not wait for downstream audits",
+      "validation": "audit lenses check schema and coverage only; synthesis never declares a winner or blocks itself",
+      "contracts": ["#12", "#13"]
+    },
+    {
+      "id": "adversarial-dual-validation",
+      "title": "Blind dual validators with fail-closed verdicts and one root gate",
+      "domain": "audit and review",
+      "task_family": "audit or review",
+      "baseline_tier": "L3",
+      "source_shape": "Grok blind judge panels with distinct priorities and Claude review-scorer panels; one binding aggregate owner",
+      "phases": ["freeze criteria", "draft assembly", "parallel blind validators", "root gate", "conditional single repair", "terminal"],
+      "fanout": "independent validators with disjoint criteria over the same artifact",
+      "join": "index-aligned regroup; one root gate aggregates; no validator approves alone",
+      "validation": "malformed or missing verdicts fail closed; exactly one repair allowance",
+      "contracts": ["#13"]
+    },
+    {
+      "id": "disjoint-writers-worktree",
+      "title": "Per-node environments: local discovery, disjoint worktree writers",
+      "domain": "repository implementation",
+      "task_family": "feature or refactor",
+      "baseline_tier": "L2",
+      "source_shape": "Claude disjoint implement teammates in isolated worktrees with a director that owns integration and publication",
+      "phases": ["confirm scope", "parallel local discovery", "parallel disjoint worktree writers", "validation", "root publishes", "terminal"],
+      "fanout": "two writers with demonstrably disjoint file scopes; discovery stays read-only",
+      "join": "root integration owner publishes the final artifact from the real checkout, not from a disposable worktree",
+      "validation": "targeted checks after integration; pending worktree setup resolved with provisioning-scale bounds",
+      "contracts": ["#14", "#13"]
+    }
+  ]
+}

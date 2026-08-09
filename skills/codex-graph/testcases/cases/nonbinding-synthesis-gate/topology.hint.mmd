@@ -1,0 +1,16 @@
+flowchart TD
+    N1[Freeze contract topics and non-binding rules] --> N2A[Collect outdoor and parks candidates]
+    N1 --> N2B[Collect culture and museums candidates]
+    N1 --> N2C[Collect markets and walks candidates]
+    N2A --> N3[Synthesize non-binding merged draft]
+    N2B --> N3
+    N2C --> N3
+    N3 --> V1A[Audit provenance fields]
+    N3 --> V1B[Audit topic coverage]
+    V1A --> G1{Root acceptance gate}
+    V1B --> G1
+    G1 -->|pass| T1[Return non-binding report and audit results]
+    G1 -->|one revision| R1[Revise named entries once]
+    R1 --> V2[Re-run affected audit lane]
+    V2 -->|pass| T1
+    V2 -->|fail| X1[Stop with evidence]

@@ -279,3 +279,161 @@ test("unwraps resolveTool envelopes from wait and read", async () => {
   assert.equal(result.terminalEmitted, true);
   assert.equal(result.terminal.node_id, "W1");
 });
+
+
+// ── Dynamic-workflow pattern fixtures ───────────────────────────────────────
+// Shapes derived from real Grok/Claude orchestration patterns; see
+// docs/dynamic-workflow-testcase-catalog.md and testcases/.
+
+test("atomic screen fan-out: verdicts terminal at first read need no waits (#13)", async () => {
+  // Grok screen phase: one atomic screener per candidate; workers finish fast
+  // and the verdict is nested as string JSON inside turns/items (Lisbon v3).
+  const candidates = ["S1", "S2", "S3", "S4", "S5"];
+  const results = await Promise.all(
+    candidates.map((nodeId) =>
+      collectTask({
+        nodeId,
+        threadId: `screen-${nodeId}`,
+        readThread: async () => ({
+          turns: [
+            {
+              items: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    node_id: nodeId,
+                    status: "complete",
+                    verdict: nodeId === "S3" ? "KILL" : "PASS",
+                    reason: "hard gate check",
+                    gate_failed: nodeId === "S3" ? "heat" : "",
+                  }),
+                },
+              ],
+            },
+          ],
+        }),
+        waitThreads: async () => {
+          throw new Error("wait must not run when read already has the handoff");
+        },
+      }),
+    ),
+  );
+  for (const result of results) {
+    assert.equal(result.status, "passed");
+    assert.deepEqual(result.calls, []);
+  }
+  assert.deepEqual(
+    results.map((result) => result.terminal.verdict),
+    ["PASS", "PASS", "KILL", "PASS", "PASS"],
+  );
+});
+
+test("screen-then-POV: second-stage fan-out follows first-stage verdicts", async () => {
+  // Funnel shape: atomic screeners decide the pool; sealed deep-research
+  // workers exist only for survivors. A blocked screener is distinguishable
+  // from a KILL verdict so the root can apply its own fail-open policy.
+  const pool = ["alpha", "beta", "gamma", "delta"];
+  const killed = new Set(["beta"]);
+  const stalled = new Set(["delta"]);
+  const screens = await Promise.all(
+    pool.map((name, index) =>
+      collectTask({
+        nodeId: `S${index + 1}`,
+        threadId: `screen-${name}`,
+        maxIdlePolls: 1,
+        readThread: async () => ({ items: [] }),
+        waitThreads: async () =>
+          stalled.has(name)
+            ? { items: [] }
+            : {
+                items: [],
+                terminal: {
+                  node_id: `S${index + 1}`,
+                  status: "complete",
+                  name,
+                  verdict: killed.has(name) ? "KILL" : "PASS",
+                },
+              },
+      }),
+    ),
+  );
+
+  const survivors = [];
+  const killLog = [];
+  screens.forEach((result, index) => {
+    const name = pool[index];
+    if (result.status === "passed" && result.terminal.verdict === "PASS") {
+      survivors.push(name);
+    } else if (result.status === "passed") {
+      killLog.push({ name, reason: "gate failed", stage: "screen" });
+    } else {
+      // Root-owned fail-open policy: a broken screener keeps the candidate.
+      assert.equal(result.status, "blocked");
+      assert.equal(result.terminalEmitted, false);
+      survivors.push(name);
+      killLog.push({ name, reason: "screener blocked; failed open", stage: "screen" });
+    }
+  });
+  assert.deepEqual(survivors, ["alpha", "gamma", "delta"]);
+  assert.equal(killLog.length, 2);
+
+  const povs = await Promise.all(
+    survivors.map((name, index) =>
+      collectTask({
+        nodeId: `P${index + 1}`,
+        threadId: `pov-${name}`,
+        readThread: async () => ({
+          terminal: {
+            node_id: `P${index + 1}`,
+            status: "complete",
+            destination: name,
+            load_bearing_claims: ["c1", "c2", "c3"],
+          },
+        }),
+        waitThreads: async () => ({ items: [] }),
+      }),
+    ),
+  );
+  assert.equal(povs.length, survivors.length);
+  assert.ok(povs.every((result) => result.status === "passed"));
+  assert.ok(!povs.some((result) => result.terminal.destination === "beta"));
+});
+
+test("adversarial dual validators: malformed lane fails closed at the join", async () => {
+  // Blind dual-validator panel: one lane returns a valid verdict, the other
+  // returns wrong-node and malformed-status handoffs. The malformed lane must
+  // end blocked, and the join must not count it as confirmation.
+  const lanes = await Promise.all([
+    collectTask({
+      nodeId: "V1A",
+      threadId: "lane-a",
+      readThread: async () => ({
+        terminal: {
+          node_id: "V1A",
+          status: "complete",
+          pass: true,
+          evidence: "independently reproduced every claim",
+        },
+      }),
+      waitThreads: async () => ({ items: [] }),
+    }),
+    collectTask({
+      nodeId: "V1B",
+      threadId: "lane-b",
+      maxIdlePolls: 1,
+      readThread: async () => ({ items: [] }),
+      waitThreads: sequenceWaiter([
+        { items: [], terminal: { node_id: "OTHER", status: "complete" } },
+        { items: [], terminal: { node_id: "V1B", status: "approved-ish" } },
+      ]),
+    }),
+  ]);
+
+  assert.equal(lanes[0].status, "passed");
+  assert.equal(lanes[1].status, "blocked");
+  assert.equal(lanes[1].terminal, undefined);
+  const confirmed = lanes.every(
+    (lane) => lane.status === "passed" && lane.terminal?.pass === true,
+  );
+  assert.equal(confirmed, false);
+});
