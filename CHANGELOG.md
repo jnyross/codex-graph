@@ -9,6 +9,10 @@ All notable product releases are documented here.
 - fix: expectations checker resolves read/wait helper names as call sites so mixed wrapper collectors (direct wait, helper-bound reads) are judged correctly instead of false-failing `read-after-wait`, and declaring `collection` now requires at least one resolved call site so a call-free stub can no longer pass via the ordering carve-out
 - fix: matcher name/preview keys, bracketed per-node tag guard with claimed-id exclusion, worktree git preflight
 
+## [0.5.3] - 2026-08-09
+
+- fix: thread-list matcher robustness + worktree preflight gate (#17)
+
 ## [0.5.2] - 2026-08-09
 
 - fix: resolve helper call sites and reject call-free collectors (#20)
