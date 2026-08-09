@@ -137,9 +137,10 @@ Do not add `agent_type`, model, or reasoning overrides unless the goal requires 
 Use `Promise.allSettled` when partial diagnostics are useful, but treat any required worker failure as a blocked stage. Create each node's handle **before** the tool call and rethrow with that handle attached so aggregate failures can report live work:
 
 ```javascript
-async function startRequiredNode(node, spawnTool) {
+async function startRequiredNode(node, spawnTool, projectId) {
   const handle = {
     node_id: node.id,
+    project_id: projectId,
     run_tag: node.runTag,
     title: node.title,
     state: "pending_setup",
@@ -161,9 +162,9 @@ async function startRequiredNode(node, spawnTool) {
   }
 }
 
-async function spawnRequiredBatch(nodes, spawnTool) {
+async function spawnRequiredBatch(nodes, spawnTool, projectId) {
   const settled = await Promise.allSettled(
-    nodes.map((node) => startRequiredNode(node, spawnTool)),
+    nodes.map((node) => startRequiredNode(node, spawnTool, projectId)),
   );
 
   const failures = settled
