@@ -5,6 +5,9 @@ const test = require("node:test");
 const {
   MAX_OUTPUT_CHARS_PER_ITEM,
   collectTask,
+  normalizeToolResult,
+  aggregateStartFailure,
+  canonicalUrlForComparison,
 } = require("./task_collection_harness.js");
 
 function sequenceWaiter(snapshots) {
@@ -120,4 +123,70 @@ test("ignores malformed terminal handoffs and returns blocked", async () => {
 
   assert.equal(result.status, "blocked");
   assert.equal(result.terminal, undefined);
+});
+
+test("parses a JSON-string tool result exactly once and keeps the raw payload", () => {
+  const raw = JSON.stringify({
+    threadId: "019fe5b3-09bd-7020-a3a6-500d2969dce9",
+    projectlessOutputDirectory: "/tmp/diag/outputs",
+    hostId: "local",
+  });
+
+  const normalized = normalizeToolResult(raw);
+
+  assert.equal(normalized.value.threadId, "019fe5b3-09bd-7020-a3a6-500d2969dce9");
+  assert.equal(normalized.value.hostId, "local");
+  assert.equal(normalized.raw, raw);
+
+  const passthrough = normalizeToolResult({ threadId: "t-1" });
+  assert.deepEqual(passthrough.value, { threadId: "t-1" });
+});
+
+test("does not extract JSON fragments from a non-JSON string tool result", () => {
+  const mixed = 'prefix {"threadId":"t-9"} suffix';
+
+  const normalized = normalizeToolResult(mixed);
+
+  assert.equal(normalized.value, mixed);
+  assert.equal(normalized.raw, mixed);
+});
+
+test("preserves every rejected start handle on aggregate failure", () => {
+  const settled = [
+    { status: "fulfilled", value: { node_id: "D1" } },
+    {
+      status: "rejected",
+      reason: Object.assign(new Error("no ready threadId"), {
+        handle: { node_id: "D2", state: "pending_setup" },
+      }),
+    },
+    {
+      status: "rejected",
+      reason: Object.assign(new Error("no ready threadId"), {
+        handle: { node_id: "D3", state: "pending_setup" },
+      }),
+    },
+    { status: "rejected", reason: new Error("handleless rejection") },
+  ];
+
+  const error = aggregateStartFailure("Required feed workers failed to start", settled);
+
+  assert.match(error.message, /failed to start/);
+  assert.deepEqual(
+    error.handles.map((handle) => handle.node_id),
+    ["D2", "D3"],
+  );
+});
+
+test("normalizes HTML entities before URL comparison", () => {
+  const escaped = "https://example.org/story?a=1&amp;b=2";
+  const decimal = "https://example.org/story?a=1&#38;b=2";
+  const hex = "https://example.org/story?a=1&#x26;b=2";
+  const plain = "https://example.org/story?a=1&b=2";
+
+  assert.equal(canonicalUrlForComparison(escaped), plain);
+  assert.equal(canonicalUrlForComparison(decimal), plain);
+  assert.equal(canonicalUrlForComparison(hex), plain);
+  assert.equal(canonicalUrlForComparison(plain), plain);
+  assert.equal(canonicalUrlForComparison(null), null);
 });

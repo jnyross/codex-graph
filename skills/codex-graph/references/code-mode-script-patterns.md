@@ -77,6 +77,40 @@ function resolveTool(operation, { required = true } = {}) {
 
 Do not rely on this helper alone when the current declaration already provides an exact name and schema. Prefer the exact exposed declaration and use defensive resolution only for namespace portability.
 
+## Normalize tool results at the call boundary
+
+A resolved tool can return its entire payload as a JSON **string** at the
+JavaScript level, not an object (observed for `codex_app__create_thread` on
+ChatGPT Desktop for macOS: `typeof result === "string"`). Any key lookup
+applied to the raw return silently fails, which can wrongly mark every
+successful start as failed.
+
+Wrap every resolved `call` with an exact-envelope parser that keeps the raw
+payload available:
+
+```javascript
+function normalizeToolResult(raw) {
+  if (typeof raw !== "string") return { value: raw, raw };
+  try {
+    return { value: JSON.parse(raw.trim()), raw };
+  } catch {
+    return { value: raw, raw };
+  }
+}
+
+call: async (args) => {
+  const { value, raw } = normalizeToolResult(await tools[propertyName](args));
+  lastRawToolResult = raw; // keep for handles and blocked evidence
+  return value;
+}
+```
+
+Parse the whole trimmed string exactly once. Do not apply fragment heuristics
+(fenced-block or `{...}` extraction) to a tool return: those heuristics exist
+for model prose inside structured `items`, and on a tool payload they can
+silently discard parts of a multi-object response. Store the raw return in the
+handle's `start_result` so blocked evidence keeps the unmodified payload.
+
 ## Build arguments from the exposed declaration
 
 Multi-agent versions may accept different spawn fields. Inspect the declaration text before adding optional fields.
@@ -111,7 +145,10 @@ async function spawnRequiredBatch(nodes, spawnTool) {
     .filter(({ result }) => result.status === "rejected");
 
   if (failures.length > 0) {
-    throw new Error(`Required workers failed to spawn: ${failures.map(({ node }) => node.id).join(", ")}`);
+    throw Object.assign(
+      new Error(`Required workers failed to spawn: ${failures.map(({ node }) => node.id).join(", ")}`),
+      { handles: failures.map(({ result }) => result.reason?.handle).filter(Boolean) },
+    );
   }
 
   return settled.map(({ value }, index) => ({
@@ -135,6 +172,13 @@ When the script creates visible Codex tasks, read `task-lifecycle.md` and use it
 A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the exact project ID and unique run tag. The tag normally appears in `title`, but can appear in `summary` while project setup is loading. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
 
 Do not reduce a task handle to one convenience ID while setup or execution is live. A blocked terminal report must include each node ID, ready or pending ID, project ID, host ID, title, state, and the exact start or collection error.
+
+When several required starts are aggregated into one error, attach each
+rejected node's handle to the aggregate error
+(`Object.assign(new Error(...), { handles })`) and spread `error.handles` into
+the blocked result's live-handle list. A start rejection whose task was already
+created is still a live handle; dropping it orphans a running task and makes
+the blocked report unrecoverable.
 
 ## Read structured task output
 
@@ -245,6 +289,27 @@ Revalidation runs only the affected lanes and any global check invalidated by
 the repair.
 
 Each validator must cite a declared acceptance criterion. It cannot require a larger sample or new coverage domain after the run starts. The root gate rejects repair instructions that contradict the fixed scope or cannot be completed within the one declared repair stage.
+
+When a validator compares URLs or other link fields across artifacts, decode
+HTML entities before comparing so markup-escaping differences do not consume
+the single repair allowance. RSS and HTML sources routinely deliver `&amp;`,
+`&#38;`, or `&#x26;` where the canonical URL holds `&`; these are the same
+link, not a provenance defect. Compare canonical forms:
+
+```javascript
+function canonicalUrlForComparison(url) {
+  if (typeof url !== "string") return url;
+  return url
+    .replace(/&amp;/gi, "&")
+    .replace(/&#0*38;/g, "&")
+    .replace(/&#x0*26;/gi, "&")
+    .trim();
+}
+```
+
+Reserve the repair stage for substantive defects; instruct validators to apply
+this normalization in their prompts when link fidelity is an acceptance
+criterion.
 
 ## Exactly one repair, unrolled
 
