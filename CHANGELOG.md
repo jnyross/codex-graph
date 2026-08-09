@@ -10,6 +10,10 @@ All notable product releases are documented here.
 - fix: matcher name/preview keys, bracketed per-node tag guard with claimed-id exclusion, worktree git preflight
 - fix: validator satisfiability + repair correlation contracts — dry-run acceptance validators for a reachable pass verdict, never reuse batch-level validators on subset payloads, target repair from verdict affected IDs, accept only post-repair handoffs on recollect, skip invalid handoff sightings, preserve executed_nodes in blocked and failed terminals (Lisbon dogfood v5)
 
+## [0.5.4] - 2026-08-09
+
+- fix: validator satisfiability + repair correlation contracts (#18)
+
 ## [0.5.3] - 2026-08-09
 
 - fix: thread-list matcher robustness + worktree preflight gate (#17)
