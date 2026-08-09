@@ -71,14 +71,23 @@ Recognized fields (all optional unless noted):
   both lists non-empty → the script must create both env types (a global
   worktree for one writer is the #14 regression).
 - `collection` — `{ "read_first": true, "read_after_wait": true,
-  "max_output_chars_per_item": 20000 }`. `read_first` requires a
-  read-thread call to appear before the first wait-thread call;
-  `read_after_wait` requires a read call after the first wait call;
-  the item budget caps every literal `maxOutputCharsPerItem` in the script.
+  "max_output_chars_per_item": 20000 }`. Ordering is judged on
+  **await-adjacent call sites only** (`await …readThread(…)` vs
+  `await …waitThreads(…)`), so parameter lists, tool bindings, and comments
+  cannot flip the verdict. `read_first` fails when the first await-adjacent
+  wait call precedes any await-adjacent read call; `read_after_wait`
+  requires an await-adjacent read after the first such wait. A collector
+  that reaches the tools only through wrapper helpers has no direct call
+  sites and is not judged. The item budget caps every literal
+  `maxOutputCharsPerItem` in the script.
 - `single_repair` — requires a `repairUsed` marker in the script.
 - `terminal_guard` — requires a `terminalEmitted` marker.
-- `pending_setup_resolution` — requires `clientThreadId` handling to appear
-  in the script (pending setup handles must be resolvable, #14).
+- `pending_setup_resolution` — requires the `clientThreadId` identifier
+  **plus** evidence of a bounded resolution loop in the same script: a
+  named attempts constant (`START_RESOLVE_ATTEMPTS`, `RESOLVE_ATTEMPTS`,
+  `MAX_SETUP_POLLS`, `resolveBounds`) or a task-list poll
+  (`list_threads`/`listThreads`). Merely storing or testing the identifier
+  is the canonical #14 failure and does not pass.
 - `required_snippets` / `forbidden_snippets` — literal substrings that must
   or must not appear anywhere in the script. Used, for example, to forbid
   publication-rule phrases inside mid-graph worker prompts (#12 is enforced

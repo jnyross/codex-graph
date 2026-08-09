@@ -133,7 +133,9 @@ const env_${id} = { environment: { type: "local" } };`);
     lines.push(`const env_${id} = { environment: { type: "worktree" } };`);
   }
   if (expectations.pending_setup_resolution) {
+    lines.push("const START_RESOLVE_ATTEMPTS = 90;");
     lines.push("const pending = start.clientThreadId ?? null;");
+    lines.push("const roster = await listThreads({ limit: 50 });");
   }
   if (expectations.collection) {
     lines.push("const MAX_OUTPUT_CHARS_PER_ITEM = 20000;");
@@ -261,4 +263,68 @@ test("missing pending clientThreadId handling fails (#14)", () => {
     verdict.checks.find((c) => c.id === "setup:pending-resolution").ok,
     false,
   );
+});
+
+test("empty contract does not pass vacuously", () => {
+  const verdict = checkWorkflowText("anything at all", { case_id: "x" });
+  assert.equal(verdict.ok, false);
+  assert.deepEqual(verdict.checks, []);
+});
+
+test("parameter-list identifier order cannot flip read-first (#13)", () => {
+  // frozen-lisbon-v3 shape after a 2-line parameter rename: readThread
+  // precedes waitThreads in the signature, but the first await-adjacent
+  // call is still the wait. The defect must keep failing.
+  const script = [
+    "async function collect(handles, readThread, waitThreads) {",
+    "  const snap = await waitThreads.call({ targets: [] });",
+    "  const out = await readThread.call({ threadId: 't' });",
+    "  return out;",
+    "}",
+  ].join("\n");
+  const verdict = checkWorkflowText(script, {
+    case_id: "x",
+    collection: { read_first: true },
+  });
+  assert.equal(verdict.ok, false);
+  const check = verdict.checks.find((c) => c.id === "collection:read-first");
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /wait-only/);
+});
+
+test("helper-wrapped correct collector is not false-failed on read-first", () => {
+  // Shape of a genuinely read-first collector whose wait helper happens to
+  // be declared above its read helper and whose tool calls sit inside
+  // wrappers: no await-adjacent call sites, so ordering is not judged.
+  const script = [
+    "async function waitForNode(h) { return waitThreads.call({ targets: [h] }); }",
+    "async function readNode(h) { return readThread.call({ threadId: h }); }",
+    "async function collect(h) {",
+    "  let out = await readNode(h);",
+    "  while (!out.done) { await waitForNode(h); out = await readNode(h); }",
+    "  return out;",
+    "}",
+  ].join("\n");
+  const verdict = checkWorkflowText(script, {
+    case_id: "x",
+    collection: { read_first: true, read_after_wait: true },
+  });
+  assert.equal(verdict.ok, true);
+});
+
+test("mentioning clientThreadId without a resolution loop fails (#14)", () => {
+  // The canonical #14 failure stores and tests the identifier but never
+  // resolves it against the task list.
+  const script = [
+    "const handle = { client_thread_id: start.clientThreadId ?? null };",
+    "if (!handle.client_thread_id) { throw new Error('no id'); }",
+  ].join("\n");
+  const verdict = checkWorkflowText(script, {
+    case_id: "x",
+    pending_setup_resolution: true,
+  });
+  assert.equal(verdict.ok, false);
+  const check = verdict.checks.find((c) => c.id === "setup:pending-resolution");
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /no resolution-loop evidence/);
 });

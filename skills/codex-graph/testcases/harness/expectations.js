@@ -29,10 +29,12 @@ const KNOWN_EXPECTATION_KEYS = new Set([
   "forbidden_snippets",
 ]);
 
-// Tool-name tripwires. Generated scripts bind read/wait tools under names
-// containing these stems regardless of client namespace.
-const READ_TOOL_RE = /read_?[Tt]hread|readTask|read_task/;
-const WAIT_TOOL_RE = /wait_?[Tt]hread|waitTask|wait_task/;
+// Await-adjacent tool call sites. Generated scripts bind read/wait tools
+// under names containing these stems regardless of client namespace; the
+// `await` prefix restricts matching to call sites so that parameter lists,
+// bindings, and comments cannot influence ordering verdicts.
+const AWAIT_READ_CALL_RE = /await\s+[\w.$]*read_?[Tt]hread[\w$]*|await\s+[\w.$]*read_?[Tt]ask[\w$]*/;
+const AWAIT_WAIT_CALL_RE = /await\s+[\w.$]*wait_?[Tt]hread[\w$]*|await\s+[\w.$]*wait_?[Tt]ask[\w$]*/;
 const LOCAL_ENV_RE = /type\s*:\s*["']local["']/g;
 const WORKTREE_ENV_RE = /type\s*:\s*["']worktree["']/g;
 const ITEM_BUDGET_RE =
@@ -167,27 +169,39 @@ function checkWorkflowText(scriptText, expectations) {
 
   const collection = expectations.collection;
   if (collection) {
-    const firstRead = scriptText.search(READ_TOOL_RE);
-    const firstWait = scriptText.search(WAIT_TOOL_RE);
+    // Await-adjacent call sites only: parameter lists, tool bindings, and
+    // comments mention these names without `await`, so declaration order
+    // cannot flip the verdict (observed: a 2-line parameter rename flipped
+    // the frozen-lisbon-v3 verdict under first-mention matching). A collector
+    // that reaches the tools only through wrapper helpers has no direct call
+    // sites and is not judged.
+    const firstRead = scriptText.search(AWAIT_READ_CALL_RE);
+    const firstWait = scriptText.search(AWAIT_WAIT_CALL_RE);
     if (collection.read_first) {
-      const ok = firstRead !== -1 && (firstWait === -1 || firstRead < firstWait);
-      add(
-        "collection:read-first",
-        ok,
-        ok
-          ? "read tool referenced before any wait tool"
-          : "no read before the first wait (wait-only collection, #13)",
-      );
+      let ok;
+      let detail;
+      if (firstWait === -1) {
+        ok = true;
+        detail =
+          firstRead === -1
+            ? "no await-adjacent tool calls; wrapper-based collector not judged"
+            : "await-adjacent read call present and no direct wait call";
+      } else {
+        ok = firstRead !== -1 && firstRead < firstWait;
+        detail = ok
+          ? "await-adjacent read call precedes the first wait call"
+          : "first await-adjacent wait call precedes any read call (wait-only collection, #13)";
+      }
+      add("collection:read-first", ok, detail);
     }
     if (collection.read_after_wait) {
       let ok = true;
-      let detail = "no wait tool referenced; nothing to follow";
+      let detail = "no await-adjacent wait call; nothing to follow";
       if (firstWait !== -1) {
-        const tail = scriptText.slice(firstWait);
-        ok = READ_TOOL_RE.test(tail);
+        ok = AWAIT_READ_CALL_RE.test(scriptText.slice(firstWait));
         detail = ok
-          ? "read tool referenced after the first wait"
-          : "no read after the first wait (#13)";
+          ? "await-adjacent read call after the first wait"
+          : "no read call after the first wait (#13)";
       }
       add("collection:read-after-wait", ok, detail);
     }
@@ -229,13 +243,24 @@ function checkWorkflowText(scriptText, expectations) {
   }
 
   if (expectations.pending_setup_resolution) {
-    const ok = /clientThreadId|client_thread_id/.test(scriptText);
+    const mentions = /clientThreadId|client_thread_id/.test(scriptText);
+    // The identifier alone is not resolution: the canonical #14 failure
+    // stores and tests clientThreadId without ever resolving it. Require
+    // evidence of a bounded resolution loop — a named attempts constant or a
+    // task-list poll — in the same script.
+    const resolves =
+      /START_RESOLVE_ATTEMPTS|RESOLVE_ATTEMPTS|MAX_SETUP_POLLS|resolveBounds/.test(
+        scriptText,
+      ) || /list_?[Tt]hreads|list_?[Tt]asks/.test(scriptText);
+    const ok = mentions && resolves;
     add(
       "setup:pending-resolution",
       ok,
       ok
-        ? "pending clientThreadId handling present"
-        : "no pending clientThreadId resolution (#14)",
+        ? "pending clientThreadId handling with bounded resolution evidence"
+        : mentions
+          ? "clientThreadId mentioned but no resolution-loop evidence (bounded-attempts marker or task-list call) (#14)"
+          : "no pending clientThreadId resolution (#14)",
     );
   }
 
@@ -258,7 +283,9 @@ function checkWorkflowText(scriptText, expectations) {
   }
 
   return {
-    ok: checks.every((check) => check.ok),
+    // An empty contract must not green-light arbitrary input: at least one
+    // check has to have run for an ok verdict.
+    ok: checks.length > 0 && checks.every((check) => check.ok),
     case: expectations.case_id,
     checks,
   };

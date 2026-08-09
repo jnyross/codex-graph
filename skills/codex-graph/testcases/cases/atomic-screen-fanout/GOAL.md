@@ -1,9 +1,10 @@
 # Goal
 
-I have a fixed shortlist of 24 candidate European city-break destinations for
-a long weekend with two adults and two primary-school-age children,
-travelling from Birmingham in early June. I want each candidate screened
-independently against four hard gates, and nothing else decided for me.
+I have a fixed shortlist of 24 candidate European city-break destinations
+for a long weekend with a group of four including school-age children,
+travelling from one fixed origin city in early summer. I want each candidate
+screened independently against four hard gates, and nothing else decided
+for me.
 
 Hard gates (a candidate is killed only when a gate clearly fails):
 

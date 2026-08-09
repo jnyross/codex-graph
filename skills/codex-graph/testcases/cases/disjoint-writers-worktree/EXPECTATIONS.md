@@ -45,7 +45,7 @@ within chat-scale bounds, and blocked the run before collection.
   "case_id": "disjoint-writers-worktree",
   "task_family": "feature or refactor",
   "baseline_tier": "L2",
-  "required_node_ids": ["N1", "D1", "D2", "W1", "W2", "V1", "G1", "T1"],
+  "required_node_ids": ["N1", "D1", "D2", "W1", "W2", "V1", "G1", "R1", "V2", "T1"],
   "parallel_groups": [["D1", "D2"], ["W1", "W2"]],
   "env": {
     "local": ["N1", "D1", "D2", "V1", "G1", "T1"],
@@ -57,6 +57,7 @@ within chat-scale bounds, and blocked the run before collection.
     "max_output_chars_per_item": 20000
   },
   "pending_setup_resolution": true,
+  "single_repair": true,
   "terminal_guard": true,
   "required_snippets": ["allSettled"],
   "forbidden_snippets": [
