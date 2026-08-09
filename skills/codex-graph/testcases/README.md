@@ -71,14 +71,20 @@ Recognized fields (all optional unless noted):
   both lists non-empty → the script must create both env types (a global
   worktree for one writer is the #14 regression).
 - `collection` — `{ "read_first": true, "read_after_wait": true,
-  "max_output_chars_per_item": 20000 }`. Ordering is judged on
-  **await-adjacent call sites only** (`await …readThread(…)` vs
-  `await …waitThreads(…)`), so parameter lists, tool bindings, and comments
-  cannot flip the verdict. `read_first` fails when the first await-adjacent
-  wait call precedes any await-adjacent read call; `read_after_wait`
-  requires an await-adjacent read after the first such wait. A collector
-  that reaches the tools only through wrapper helpers has no direct call
-  sites and is not judged. The item budget caps every literal
+  "max_output_chars_per_item": 20000 }`. Declaring `collection` requires at
+  least one await-adjacent tool or resolved-helper call site
+  (`collection:call-sites`) — a call-free script fails outright. Ordering
+  is judged on **await-adjacent call sites**, so parameter lists, bindings,
+  and comments cannot flip the verdict. Helper names bound to exactly one
+  of the two tools — a function-like binding (`const readFor = … =>`,
+  `resolveTool`, `.bind`) or a declared function whose bounded body window
+  references the tool — count as call sites for that tool; a helper
+  touching both tools is ambiguous and votes for neither, so mixed
+  collectors (direct wait, wrapped reads) are judged correctly.
+  `read_first` fails when the first wait call site precedes any read call
+  site; `read_after_wait` requires a read call site after the first wait.
+  When no call sites resolve at all, ordering is not judged — the
+  call-sites check governs. The item budget caps every literal
   `maxOutputCharsPerItem` in the script.
 - `single_repair` — requires a `repairUsed` marker in the script.
 - `terminal_guard` — requires a `terminalEmitted` marker.
