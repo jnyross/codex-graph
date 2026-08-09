@@ -141,6 +141,7 @@ async function startRequiredNode(node, spawnTool, projectId) {
   const handle = {
     node_id: node.id,
     project_id: projectId,
+    environment: node.environment,
     run_tag: node.runTag,
     title: node.title,
     state: "pending_setup",
@@ -193,11 +194,24 @@ Do not create a worker that spawns another worker.
 
 ## Bind visible tasks to the correct project
 
-When the script creates visible Codex tasks, read `task-lifecycle.md` and use its complete contract. Resolve the exact saved project before task creation. Use its local environment only when every task is read-only. Use isolated project worktrees when any task can write. Use a projectless target only when no saved project applies or the user explicitly requests it.
+When the script creates visible Codex tasks, read `task-lifecycle.md` and use its complete contract. Resolve the exact saved project before task creation. Choose the task environment **per node**:
+
+- Read-only nodes (research, discovery, audit) →
+  `environment: { type: "local" }`.
+- Nodes that write repository files →
+  `environment: { type: "worktree" }` with disjoint write scopes.
+- Never apply `worktree` to every node because one writer exists in the graph
+  (Lisbon dogfood v4: global worktree on research workers left all three in
+  `pending_setup` with unresolved `clientThreadId`).
+- Write final user-facing project-root artifacts from the root orchestrator
+  (or a single integration owner on the real project), not only inside a
+  disposable worker worktree.
+
+Use a projectless target only when no saved project applies or the user explicitly requests it.
 
 ## Preserve setup handles and terminal handoffs
 
-A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the unique run tag, and the exact project ID when one exists. The tag normally appears in `title`, but can appear in `summary` while project setup is loading. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
+A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the unique run tag (prefer `title`, accept `summary` while loading). Prefer exact project ID when present on the list row, but do not require it during early setup loading. Correlate by `clientThreadId` when the list exposes it. Use a chat-scale bound for local starts and a longer provisioning-scale bound for worktree starts. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
 
 Do not reduce a task handle to one convenience ID while setup or execution is live. A blocked terminal report must include each node ID, ready or pending ID, project ID, host ID, title, state, and the exact start or collection error.
 

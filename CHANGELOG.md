@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## Unreleased
+
+- fix: choose task environment per node (local for read-only, worktree only for writers) and strengthen pending `clientThreadId` resolution (Lisbon dogfood v4)
+
 ## [0.4.4] - 2026-08-09
 
 - fix: collect handoffs when workers finish before wait sees them (#13)
