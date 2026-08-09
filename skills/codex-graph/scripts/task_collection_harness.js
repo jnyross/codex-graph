@@ -212,7 +212,8 @@ async function collectTask({
   maxIdlePolls = 4,
   maxOutputCharsPerItem = MAX_OUTPUT_CHARS_PER_ITEM,
   delay = async () => {},
-  minTurn,
+  repairMarker,
+  startCursor,
   validateHandoff,
 }) {
   if (maxOutputCharsPerItem > MAX_OUTPUT_CHARS_PER_ITEM) {
@@ -221,7 +222,9 @@ async function collectTask({
     );
   }
 
-  let afterCursor;
+  // startCursor seeds cursor provenance: a cursor recorded before the repair
+  // send makes cursor-respecting read tools return only post-repair content.
+  let afterCursor = startCursor;
   let collectionRounds = 0;
   let idlePolls = 0;
   let previousFingerprint;
@@ -234,20 +237,40 @@ async function collectTask({
   const calls = [];
   const reads = [];
 
+  function recordSighting(errors, handoff) {
+    const key = JSON.stringify(handoff);
+    if (!seenHandoffKeys.has(key)) {
+      seenHandoffKeys.add(key);
+      invalidSightings.push({ errors, handoff });
+    }
+  }
+
   function acceptHandoff(handoff) {
     const isSuccessStatus =
       handoff.status === "complete" || handoff.status === "passed";
+    if (
+      isSuccessStatus &&
+      repairMarker !== undefined &&
+      !handoff[repairMarker]
+    ) {
+      // Post-repair correlation is by explicit marker (plus cursor
+      // provenance), never by array index into a returned turn list: reads
+      // may return a clipped window, so an index is meaningless and a short
+      // window is not proof of absence. A marker-less complete handoff is
+      // the stale pre-repair artifact — skip it and keep collecting.
+      recordSighting(
+        [`missing post-repair marker "${repairMarker}"`],
+        handoff,
+      );
+      return false;
+    }
     if (isSuccessStatus && typeof validateHandoff === "function") {
       const errors = validateHandoff(handoff);
       if (Array.isArray(errors) && errors.length > 0) {
         // Structurally invalid sighting, not a terminal: skip and keep
         // collecting (including later handoffs in this same snapshot).
         // Explicit blocked/failed status always terminates.
-        const key = JSON.stringify(handoff);
-        if (!seenHandoffKeys.has(key)) {
-          seenHandoffKeys.add(key);
-          invalidSightings.push({ errors, handoff });
-        }
+        recordSighting(errors, handoff);
         return false;
       }
     }
@@ -265,18 +288,13 @@ async function collectTask({
   async function ingestSnapshot(snapshot, source, options = {}) {
     if (!snapshot || typeof snapshot !== "object") return;
     const { collectItems = true } = options;
-    if (minTurn !== undefined) {
-      // Repair recollect: only turns at index >= minTurn carry known
-      // provenance; terminal/items/whole-snapshot fallbacks are skipped.
-      if (Array.isArray(snapshot.turns)) {
-        ingestHandoffsFrom(snapshot.turns.slice(minTurn));
-      }
-    } else {
-      ingestHandoffsFrom(snapshot.terminal) ||
-        ingestHandoffsFrom(snapshot.items) ||
-        ingestHandoffsFrom(snapshot.turns) ||
-        ingestHandoffsFrom(snapshot);
-    }
+    // All fallback surfaces stay searched in repair mode; post-repair
+    // provenance is a content FILTER (repairMarker in acceptHandoff), not a
+    // restriction of the search surface.
+    ingestHandoffsFrom(snapshot.terminal) ||
+      ingestHandoffsFrom(snapshot.items) ||
+      ingestHandoffsFrom(snapshot.turns) ||
+      ingestHandoffsFrom(snapshot);
     if (collectItems && Array.isArray(snapshot.items)) {
       for (const item of snapshot.items) {
         let key;
@@ -303,6 +321,7 @@ async function collectTask({
       threadId,
       maxOutputCharsPerItem,
       includeOutputs: true,
+      ...(afterCursor !== undefined ? { afterCursor } : {}),
     };
     reads.push(readRequest);
     const rawRead = await readThread(readRequest);

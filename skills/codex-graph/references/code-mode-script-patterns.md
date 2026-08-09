@@ -364,7 +364,7 @@ criterion.
 
 Do not use a retry loop. Keep the branch visible.
 
-Select repair targets from the validator verdict's `affected_ids` mapped to node IDs; never derive them from a criterion-prefix pattern. The repair boundary of affected existing workers means exactly those nodes. Record the thread turn count or cursor before sending the repair message; a repair recollect must accept only handoffs emitted after that point. A stale pre-repair handoff is not a corrected handoff. Observed: Lisbon dogfood v5 — a criterion-prefix pattern matched every failed criterion, so the affected set degenerated to all workers while the verdict's `affected_ids` went unused.
+Select repair targets from the validator verdict's `affected_ids` mapped to node IDs; never derive them from a criterion-prefix pattern. The repair boundary of affected existing workers means exactly those nodes. Require the repair prompt to demand an explicit post-repair marker in the corrected handoff (for example a `corrected_at` timestamp) and filter recollection on that marker; add cursor or turn-id provenance when the read tool provides it. Never correlate by array index into a returned turn list. A stale pre-repair handoff is not a corrected handoff. Reads may return a clipped window, and a clipped window is not proof of absence — a handoff not yet visible means keep polling within budget under the collection read-bounds contract. Observed: Lisbon dogfood v5 — a criterion-prefix pattern matched every failed criterion, so the affected set degenerated to all workers while the verdict's `affected_ids` went unused.
 
 If L4 is active and many records need corrections, keep one logical repair
 branch but split its internal work into bounded record-specific correction

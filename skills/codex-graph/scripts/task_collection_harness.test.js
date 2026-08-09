@@ -599,7 +599,7 @@ test("repair recollect rejects the stale pre-repair handoff and accepts the post
   const result = await collectTask({
     nodeId: "W1",
     threadId: "thread-1",
-    minTurn: 1,
+    repairMarker: "corrected_at",
     maxCollectionRounds: 3,
     maxIdlePolls: 3,
     waitThreads: async () => ({ turns: [stale, freshCorrected] }),
@@ -612,6 +612,70 @@ test("repair recollect rejects the stale pre-repair handoff and accepts the post
   assert.equal(result.status, "passed");
   assert.deepEqual(result.terminal, freshCorrected);
   assert.notDeepEqual(result.terminal, stale);
+  assert.equal(result.invalidSightings.length, 1);
+  assert.match(
+    result.invalidSightings[0].errors[0],
+    /missing post-repair marker "corrected_at"/,
+  );
+});
+
+test("finds the marker-carrying corrected handoff in a clipped turn window", async () => {
+  // Scenario B: the read tool clipped a 13-turn history to the last 2 turns.
+  // Any absolute turn index recorded before the repair send is meaningless
+  // against this window; marker correlation must still find the handoff.
+  const corrected = {
+    node_id: "W1",
+    status: "complete",
+    candidates: [{ id: "fixed" }],
+    corrected_at: "2026-08-09T21:30:00Z",
+  };
+  const clippedWindow = {
+    turns: [
+      { items: [{ content: "acknowledging repair request" }] },
+      { items: [{ content: corrected }] },
+    ],
+  };
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    repairMarker: "corrected_at",
+    waitThreads: async () => ({}),
+    readThread: async () => clippedWindow,
+  });
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.terminal, corrected);
+});
+
+test("repair mode keeps fallback surfaces and filters by marker, not position", async () => {
+  const stale = {
+    node_id: "W1",
+    status: "complete",
+    candidates: [{ id: "pre-repair" }],
+  };
+  const corrected = {
+    node_id: "W1",
+    status: "complete",
+    candidates: [{ id: "post-repair" }],
+    corrected_at: "2026-08-09T21:31:00Z",
+  };
+  // Stale handoff sits on the first-searched surface (terminal); the
+  // corrected one is only reachable through the items fallback. Repair mode
+  // must skip the stale sighting and continue across surfaces.
+  const snapshot = { terminal: stale, items: [corrected] };
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    repairMarker: "corrected_at",
+    waitThreads: async () => ({}),
+    readThread: async () => snapshot,
+  });
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.terminal, corrected);
+  assert.equal(result.invalidSightings.length, 1);
+  assert.match(
+    result.invalidSightings[0].errors[0],
+    /missing post-repair marker/,
+  );
 });
 
 test("skips a structurally invalid complete sighting and collects a later valid handoff", async () => {

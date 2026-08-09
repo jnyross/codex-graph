@@ -186,7 +186,8 @@ def main() -> None:
         "no reachable pass verdict",
         "subset payloads",
         "mapped to node IDs",
-        "emitted after that point",
+        "post-repair marker",
+        "Never correlate by array index",
         "invalid handoff sighting",
         "reflecting actual progress",
     ]:
@@ -235,7 +236,8 @@ def main() -> None:
         "named `unresolved_risk`",
         "stale pre-repair handoff",
         "invalid handoff sighting",
-        "turn count or cursor",
+        "post-repair marker",
+        "Never correlate by array index",
         "reflecting actual progress",
     ]:
         if required_phrase not in lifecycle:
@@ -293,6 +295,8 @@ def main() -> None:
         "criterion-prefix",
         "mapped to node IDs",
         "stale pre-repair handoff",
+        "post-repair marker",
+        "Never correlate by array index",
     ]:
         if required_phrase not in patterns:
             fail(f"code patterns are missing verified graph lesson: {required_phrase}")

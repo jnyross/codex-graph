@@ -249,7 +249,7 @@ For each collection round:
    `complete`, `passed`, `blocked`, or `failed` when they match the node
    schema.
 8. Accept the handoff only when its `node_id`, status, and task-specific schema match.
-9. A structurally invalid handoff sighting is not terminal: skip it and keep collecting within the window. Reserve fail-closed for an explicit worker `blocked` or `failed` status or window exhaustion.
+9. A structurally invalid handoff sighting is not terminal: skip it and keep collecting within the window. Reserve fail-closed for an explicit worker `blocked` or `failed` status or window exhaustion. This governs worker handoff sightings; a malformed validator verdict still fails closed at the acceptance gate.
 10. Continue while the task is active or the handoff is not terminal. Stop only
    at an active-tool failure, explicit terminal failure, a collected terminal
    handoff, or a task-specific deadline introduced for an observed operational
@@ -335,7 +335,7 @@ Adapt the argument names to the active declaration, but preserve both
 properties: carry the cursor forward, deduplicate unchanged snapshots, and
 stay within the declared item limit and an explicit no-progress bound.
 
-Record the thread turn count or cursor before sending the repair message; a repair recollect must accept only handoffs emitted after that point. A stale pre-repair handoff is not a corrected handoff. Observed: Lisbon dogfood v5 — the repair recollect re-read the thread from the start, found the original pre-repair handoff first, and reinstalled identical data, so the repair stage was a guaranteed no-op.
+Require the repair prompt to demand an explicit post-repair marker in the corrected handoff (for example a `corrected_at` timestamp) and filter recollection on that marker; add cursor or turn-id provenance when the read tool provides it. Never correlate by array index into a returned turn list. A stale pre-repair handoff is not a corrected handoff. Reads may return a clipped window, and a clipped window is not proof of absence — a handoff not yet visible means keep polling within budget under the collection read-bounds contract. Observed: Lisbon dogfood v5 — the repair recollect re-read the thread from the start, found the original pre-repair handoff first, and reinstalled identical data, so the repair stage was a guaranteed no-op.
 
 ## 4. Make handoffs fit before execution
 
@@ -455,7 +455,7 @@ Before returning a generated graph script, check these cases against the active 
 - the final JSON is nested in structured `items`;
 - a worker already complete at first collection still yields a handoff via an initial read;
 - an empty wait snapshot still yields a handoff via a paired read_thread;
-- a repair recollect ignores the stale pre-repair handoff and accepts only a handoff emitted after the repair message;
+- a repair recollect ignores the stale pre-repair handoff and accepts only the corrected handoff carrying the required post-repair marker;
 - an invalid handoff sighting mid-window is skipped and a later valid handoff is still collected;
 - the read request stays within the item limit;
 - an oversized handoff uses an expansion queue or durable artifact;
