@@ -7,6 +7,10 @@ All notable product releases are documented here.
 - fix: choose task environment per node (local for read-only, worktree only for writers) and strengthen pending `clientThreadId` resolution (Lisbon dogfood v4)
 - feat: dynamic-workflow golden test cases under `skills/codex-graph/testcases/` — six case bundles derived from real Grok Rhai and Claude multi-agent orchestration shapes (atomic screen fan-out, slice generators, sealed POV + adversarial fact-check, non-binding synthesis, dual validation, disjoint worktree writers), an offline expectations checker (`harness/`), pattern-derived collection tests, and catalog research in `docs/dynamic-workflow-testcase-catalog.md`; both regression runners now execute the new suite and lint the topology hints
 
+## [0.5.1] - 2026-08-09
+
+- docs: cross-link dynamic-workflow test cases into the README (#19)
+
 ## [0.5.0] - 2026-08-09
 
 - feat: dynamic-workflow golden test cases from real orchestration shapes (#16)
