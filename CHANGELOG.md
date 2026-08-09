@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## [0.4.1] - 2026-08-09
+
+- Add POSIX regression runner mirroring the Windows suite (#10)
+
 ## [0.4.0] - 2026-08-08
 
 - Roll back partial parses and drop the contradictory PASS line
