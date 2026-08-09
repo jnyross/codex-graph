@@ -155,8 +155,8 @@ async function spawnRequiredBatch(nodes, spawnTool) {
 
   return settled.map(({ value }, index) => ({
     node: nodes[index],
-    spawnResult: value,
-    agentId: findAgentId(value),
+    spawnResult: value.raw,
+    agentId: findAgentId(value.value),
   }));
 }
 ```
