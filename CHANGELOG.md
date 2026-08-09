@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## [0.4.2] - 2026-08-09
+
+- fix: normalize string tool results and preserve start-failure handles (#11)
+
 ## [0.4.1] - 2026-08-09
 
 - Add POSIX regression runner mirroring the Windows suite (#10)
