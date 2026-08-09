@@ -14,6 +14,10 @@ from typing import Iterable, Sequence
 
 Version = tuple[int, int, int]
 
+UNRELEASED_HEADING = re.compile(
+    r"^##[ \t]+\[?Unreleased\]?[ \t]*$", re.IGNORECASE | re.MULTILINE
+)
+
 
 def parse_version(value: str) -> Version:
     match = re.fullmatch(r"\s*v?(\d+)\.(\d+)\.(\d+)\s*", value)
@@ -71,13 +75,39 @@ def compute_next_version(
     return format_version(candidate)
 
 
+def promote_unreleased(
+    changelog: str,
+    release_heading: str,
+    fallback_entries: str,
+) -> str | None:
+    """Promote an Unreleased section to a release section when present."""
+    heading = UNRELEASED_HEADING.search(changelog)
+    if heading is None:
+        return None
+    next_heading = re.search(r"^##\s+", changelog[heading.end() :], re.MULTILINE)
+    section_end = (
+        heading.end() + next_heading.start()
+        if next_heading is not None
+        else len(changelog)
+    )
+    body = changelog[heading.end() : section_end]
+    if body.strip():
+        return changelog[: heading.start()] + release_heading + changelog[heading.end() :]
+    replacement = f"{release_heading}\n\n{fallback_entries}\n\n"
+    return changelog[: heading.start()] + replacement + changelog[section_end:]
+
+
 def rewrite_release_files(
     root: str | Path,
     version: str,
     subjects: Sequence[str],
     release_date: str | None = None,
 ) -> None:
-    """Update VERSION, plugin.json, and prepend a changelog release section."""
+    """Update VERSION, plugin.json, and the changelog release section.
+
+    A populated ``## Unreleased`` section is promoted in place so its curated
+    content is consumed once instead of duplicated by generated commit notes.
+    """
     root = Path(root)
     version_path = root / "VERSION"
     version_text = version_path.read_text()
@@ -96,7 +126,12 @@ def rewrite_release_files(
     changelog = changelog_path.read_text()
     heading_date = release_date or date.today().isoformat()
     entries = "\n".join(f"- {subject}" for subject in subjects)
-    section = f"## [{version}] - {heading_date}\n\n{entries}\n\n"
+    release_heading = f"## [{version}] - {heading_date}"
+    promoted = promote_unreleased(changelog, release_heading, entries)
+    if promoted is not None:
+        changelog_path.write_text(promoted)
+        return
+    section = f"{release_heading}\n\n{entries}\n\n"
     marker = "\n## ["
     insertion = changelog.find(marker)
     if insertion == -1:
