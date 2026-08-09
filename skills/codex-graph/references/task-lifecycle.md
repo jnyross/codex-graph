@@ -152,6 +152,7 @@ let afterCursor;
 let collectionRounds = 0;
 let idlePolls = 0;
 let previousSnapshotFingerprint;
+let handoff;
 
 function snapshotFingerprint(snapshot) {
   return JSON.stringify({
@@ -160,11 +161,23 @@ function snapshotFingerprint(snapshot) {
   });
 }
 
+// Read first: worker may already be complete.
+{
+  const firstRead = await readThread.call({
+    threadId: handle.thread_id,
+    ...(handle.host_id ? { hostId: handle.host_id } : {}),
+    includeOutputs: true,
+    maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
+  });
+  handoff = findHandoffInValue(firstRead.value, handle.node_id);
+}
+
 while (
+  !handoff &&
   collectionRounds < MAX_COLLECTION_ROUNDS &&
   idlePolls < MAX_IDLE_POLLS
 ) {
-  const waitResult = await waitThreads({
+  const waitResult = await waitThreads.call({
     threadIds: [handle.thread_id],
     afterCursor,
     maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
@@ -180,14 +193,22 @@ while (
   if (hasNewData) {
     collectionRounds += 1;
     idlePolls = 0;
-    collectStructuredItems(snapshot.items);
   } else {
     idlePolls += 1;
   }
   previousSnapshotFingerprint = snapshotFingerprint(snapshot);
   if (nextCursor !== undefined) afterCursor = nextCursor;
-  if (hasTerminalHandoff(snapshot)) break;
-  if (!hasNewData) {
+
+  // Read after every wait — wait items alone are not sufficient.
+  const readResult = await readThread.call({
+    threadId: handle.thread_id,
+    ...(handle.host_id ? { hostId: handle.host_id } : {}),
+    includeOutputs: true,
+    maxOutputCharsPerItem: MAX_OUTPUT_CHARS_PER_ITEM,
+    ...(afterCursor !== undefined ? { afterCursor } : {}),
+  });
+  handoff = findHandoffInValue(readResult.value, handle.node_id);
+  if (!handoff && !hasNewData) {
     await new Promise((resolve) => setTimeout(resolve, COLLECTION_DELAY_MS));
   }
 }
