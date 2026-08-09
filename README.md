@@ -115,6 +115,9 @@ files and `CHANGELOG.md`, commits them back to `main`, tags the commit, and
 creates a GitHub release with generated notes. Release commits are ignored by
 the workflow to prevent loops. Use conventional commit subjects such as
 `feat: add ...`, `fix: correct ...`, or `feat!: change ...`.
+Do not add manual `## Unreleased` entries to `CHANGELOG.md`: the workflow
+generates each release section from commit subjects, so manual entries end up
+duplicated. Put the detail in the commit subject and body instead.
 
 ## Repository layout
 
