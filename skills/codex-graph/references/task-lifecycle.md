@@ -128,7 +128,11 @@ function findExactThread(value, projectId, runTag, nodeId, clientThreadId, exclu
   const taggedForm = `[${runTag}]`; // bracketed exact form only
   const text = (row, key) => (typeof row[key] === "string" ? row[key] : "");
   // Per-node unique form: the bracketed tag AND the node id in one field.
-  const fieldHit = (s) => s.includes(taggedForm) && (!nodeId || s.includes(nodeId));
+  // Token-boundary match so N1 does not substring-hit N10 / N2A.
+  const nodeToken = nodeId
+    ? new RegExp(`\\b${String(nodeId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`)
+    : null;
+  const fieldHit = (s) => s.includes(taggedForm) && (!nodeToken || nodeToken.test(s));
   const rowMatches = (row, allowPreview) => {
     const rowThreadId = row.threadId ?? row.thread_id ?? row.id ?? null;
     if (rowThreadId != null && excluded.has(String(rowThreadId))) return false;

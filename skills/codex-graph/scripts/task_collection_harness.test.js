@@ -535,6 +535,22 @@ test("two concurrent pending workers resolve to their own threads", () => {
   assert.equal(findExactThread(snapshot, null, sharedTag, "N2A", null, claimed), null);
 });
 
+test("node id match requires a token boundary (N1 vs N10, N2 vs N2A)", () => {
+  const sharedTag = "lisbon-v5-1786290000001";
+  const snapshot = {
+    threads: [
+      { id: "t-10", name: `[${sharedTag}] N10 transport` },
+      { id: "t-2a", name: `[${sharedTag}] N2A beaches` },
+      { id: "t-1", name: `[${sharedTag}] N1 scope` },
+      { id: "t-2", name: `[${sharedTag}] N2 inventory` },
+    ],
+  };
+  assert.equal(findExactThread(snapshot, null, sharedTag, "N1", null).id, "t-1");
+  assert.equal(findExactThread(snapshot, null, sharedTag, "N10", null).id, "t-10");
+  assert.equal(findExactThread(snapshot, null, sharedTag, "N2", null).id, "t-2");
+  assert.equal(findExactThread(snapshot, null, sharedTag, "N2A", null).id, "t-2a");
+});
+
 test("worktree preflight degrades a git-less single writer to a root write", () => {
   const decision = preflightWorktreeTarget({
     environmentType: "worktree",
