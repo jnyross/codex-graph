@@ -582,3 +582,82 @@ test("worktree preflight passes git repositories and local targets", () => {
     "proceed",
   );
 });
+
+test("repair recollect rejects the stale pre-repair handoff and accepts the post-repair handoff", async () => {
+  const stale = {
+    node_id: "W1",
+    status: "complete",
+    candidates: [{ id: "pre-repair" }],
+  };
+  const freshCorrected = {
+    node_id: "W1",
+    status: "passed",
+    candidates: [{ id: "post-repair" }],
+    corrected_at: "2026-08-09T10:00:00Z",
+  };
+  let reads = 0;
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    minTurn: 1,
+    maxCollectionRounds: 3,
+    maxIdlePolls: 3,
+    waitThreads: async () => ({ turns: [stale, freshCorrected] }),
+    readThread: async () => {
+      reads += 1;
+      return { turns: [{ items: [{ content: stale }] }] };
+    },
+  });
+  assert.equal(reads, 1, "stale first read must not terminate collection");
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.terminal, freshCorrected);
+  assert.notDeepEqual(result.terminal, stale);
+});
+
+test("skips a structurally invalid complete sighting and collects a later valid handoff", async () => {
+  const invalidHandoff = {
+    node_id: "W1",
+    status: "complete",
+    candidates: [{ id: "broken" }],
+  };
+  const validHandoff = {
+    node_id: "W1",
+    status: "complete",
+    candidates: [{ id: "ok" }],
+  };
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    maxCollectionRounds: 3,
+    maxIdlePolls: 3,
+    waitThreads: sequenceWaiter([
+      { turns: [invalidHandoff], afterCursor: 1 },
+      { turns: [validHandoff], afterCursor: 2 },
+    ]),
+    validateHandoff: (handoff) =>
+      handoff === invalidHandoff ? ["missing field"] : [],
+  });
+  assert.equal(result.status, "passed");
+  assert.deepEqual(result.terminal, validHandoff);
+  assert.equal(result.invalidSightings.length, 1);
+  assert.deepEqual(result.invalidSightings[0].errors, ["missing field"]);
+  assert.deepEqual(result.invalidSightings[0].handoff, invalidHandoff);
+});
+
+test("accepts an explicit failed worker handoff even when schema validation would reject it", async () => {
+  const failedHandoff = {
+    node_id: "W1",
+    status: "failed",
+    candidates: [],
+  };
+  const result = await collectTask({
+    nodeId: "W1",
+    threadId: "thread-1",
+    waitThreads: async () => ({ turns: [failedHandoff] }),
+    validateHandoff: () => ["missing field"],
+  });
+  assert.equal(result.status, "failed");
+  assert.deepEqual(result.terminal, failedHandoff);
+  assert.equal(result.terminalEmitted, true);
+  assert.deepEqual(result.invalidSightings, []);
+});

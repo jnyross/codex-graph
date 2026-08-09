@@ -203,6 +203,8 @@ async function collectTask({
   maxIdlePolls = 4,
   maxOutputCharsPerItem = MAX_OUTPUT_CHARS_PER_ITEM,
   delay = async () => {},
+  minTurn,
+  validateHandoff,
 }) {
   if (maxOutputCharsPerItem > MAX_OUTPUT_CHARS_PER_ITEM) {
     throw new RangeError(
@@ -218,18 +220,48 @@ async function collectTask({
   let terminal;
   const collectedItems = [];
   const seenItemKeys = new Set();
+  const invalidSightings = [];
+  const seenHandoffKeys = new Set();
   const calls = [];
   const reads = [];
 
   async function ingestSnapshot(snapshot, source, options = {}) {
     if (!snapshot || typeof snapshot !== "object") return;
     const { collectItems = true } = options;
-    const handoff =
-      findHandoffInValue(snapshot.terminal, nodeId) ||
-      findHandoffInValue(snapshot.items, nodeId) ||
-      findHandoffInValue(snapshot.turns, nodeId) ||
-      findHandoffInValue(snapshot, nodeId);
-    if (handoff) terminal = handoff;
+    let handoff = null;
+    if (minTurn !== undefined) {
+      // Repair recollect: only turns at index >= minTurn carry known
+      // provenance; terminal/items/whole-snapshot fallbacks are skipped.
+      if (Array.isArray(snapshot.turns)) {
+        handoff = findHandoffInValue(snapshot.turns.slice(minTurn), nodeId);
+      }
+    } else {
+      handoff =
+        findHandoffInValue(snapshot.terminal, nodeId) ||
+        findHandoffInValue(snapshot.items, nodeId) ||
+        findHandoffInValue(snapshot.turns, nodeId) ||
+        findHandoffInValue(snapshot, nodeId);
+    }
+    if (handoff) {
+      const isSuccessStatus =
+        handoff.status === "complete" || handoff.status === "passed";
+      if (isSuccessStatus && typeof validateHandoff === "function") {
+        const errors = validateHandoff(handoff);
+        if (Array.isArray(errors) && errors.length > 0) {
+          // Structurally invalid sighting, not a terminal: skip and keep
+          // collecting. Explicit blocked/failed status always terminates.
+          const key = JSON.stringify(handoff);
+          if (!seenHandoffKeys.has(key)) {
+            seenHandoffKeys.add(key);
+            invalidSightings.push({ errors, handoff });
+          }
+        } else {
+          terminal = handoff;
+        }
+      } else {
+        terminal = handoff;
+      }
+    }
     if (collectItems && Array.isArray(snapshot.items)) {
       for (const item of snapshot.items) {
         let key;
@@ -274,6 +306,7 @@ async function collectTask({
         status: terminal.status === "complete" ? "passed" : terminal.status,
         terminal,
         collectedItems,
+        invalidSightings,
         afterCursor,
         calls,
         reads,
@@ -366,6 +399,7 @@ async function collectTask({
     status,
     terminal,
     collectedItems,
+    invalidSightings,
     afterCursor,
     calls,
     reads,
