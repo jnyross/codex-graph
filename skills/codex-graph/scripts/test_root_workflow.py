@@ -21,6 +21,47 @@ def worker(role="writer"):
     }
 
 
+def review(design_digest="sha256:design-7", verdict="pass", repair_count=0):
+    return {
+        "design_revision": 7,
+        "design_digest": design_digest,
+        "repair_count": repair_count,
+        "self_check": {
+            "design_digest": design_digest,
+            "verdict": "pass",
+            "evidence_locators": ["artifact:self-check"],
+        },
+        "independent_review": {
+            "status": "complete",
+            "identity": "review-7",
+            "design_digest": design_digest,
+            "verdict": verdict,
+            "independence": {
+                "separate_context": True,
+                "read_only": True,
+                "design_authority": False,
+                "mutation_authority": False,
+            },
+            "findings": [],
+            "evidence_locators": ["artifact:independent-review"],
+        },
+    }
+
+
+def finding(classification="must-fix", disposition="unresolved"):
+    return {
+        "identity": "F-1",
+        "classification": classification,
+        "criterion": "AC-4",
+        "affected_nodes": ["design-gate"],
+        "sanitized_evidence": "The gate can admit an unresolved finding.",
+        "rationale": "Must-fix findings are binding.",
+        "clearance_condition": "An independent reviewer clears this finding.",
+        "waiver_policy": "unwaivable",
+        "disposition": disposition,
+    }
+
+
 def metadata():
     return {
         "revision": 7,
@@ -36,6 +77,8 @@ def metadata():
             "evidence": ["evidence:preflight"],
         },
         "observed_effects": ["effect:read-complete"],
+        "design_digest": "sha256:design-7",
+        "design_review": review(),
     }
 
 
@@ -60,6 +103,82 @@ class RootWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(interactive["execution_permission"]["delegated_work"])
         self.assertEqual(interactive["workflow_state"], {"state": "continue", "final": False})
+
+    def test_exact_revision_independent_review_gates_authority_bearing_design(self):
+        admitted = evaluate_root_workflow(metadata())
+        self.assertEqual(admitted["review_gate"]["status"], "pass")
+        self.assertTrue(admitted["execution_permission"]["root_mutation"])
+
+        fixtures = {}
+        fixtures["missing"] = metadata()
+        del fixtures["missing"]["design_review"]
+
+        fixtures["malformed"] = metadata()
+        fixtures["malformed"]["design_review"] = "invalid"
+
+        fixtures["stale"] = metadata()
+        fixtures["stale"]["design_review"]["design_revision"] = 6
+
+        fixtures["timed_out"] = metadata()
+        fixtures["timed_out"]["design_review"]["independent_review"] = {
+            "status": "timed_out"
+        }
+
+        fixtures["digest_mismatch"] = metadata()
+        fixtures["digest_mismatch"]["design_review"]["independent_review"][
+            "design_digest"
+        ] = "sha256:other-design"
+
+        fixtures["frozen_digest_mismatch"] = metadata()
+        fixtures["frozen_digest_mismatch"][
+            "design_digest"
+        ] = "sha256:different-frozen-design"
+
+        fixtures["empty_self_check_evidence"] = metadata()
+        fixtures["empty_self_check_evidence"]["design_review"]["self_check"][
+            "evidence_locators"
+        ] = []
+
+        fixtures["empty_review_evidence"] = metadata()
+        fixtures["empty_review_evidence"]["design_review"]["independent_review"][
+            "evidence_locators"
+        ] = []
+
+        fixtures["not_independent"] = metadata()
+        fixtures["not_independent"]["design_review"]["independent_review"][
+            "independence"
+        ]["separate_context"] = False
+
+        expected_reasons = {
+            "missing": "missing_design_review",
+            "timed_out": "independent_review_timed_out",
+            "digest_mismatch": "review_digest_mismatch",
+            "not_independent": "unproved_reviewer_independence",
+            "malformed": "malformed_design_review",
+            "stale": "stale_design_review",
+            "frozen_digest_mismatch": "frozen_design_digest_mismatch",
+            "empty_self_check_evidence": "malformed_self_check_evidence",
+            "empty_review_evidence": "malformed_review_evidence",
+        }
+        for name, fixture in fixtures.items():
+            with self.subTest(name=name):
+                result = evaluate_root_workflow(fixture)
+                self.assertEqual(result["review_gate"]["status"], "block")
+                self.assertIn(expected_reasons[name], result["review_gate"]["reasons"])
+                self.assertEqual(
+                    result["workflow_state"], {"state": "blocked", "final": True}
+                )
+                self.assertFalse(result["execution_permission"]["root_mutation"])
+
+        read_only = metadata()
+        read_only["authority_preflight"]["reachable_mutations"] = []
+        del read_only["design_review"]
+        del read_only["design_digest"]
+        read_only_result = evaluate_root_workflow(read_only)
+        self.assertEqual(read_only_result["review_gate"]["status"], "not_applicable")
+        self.assertEqual(
+            read_only_result["workflow_state"], {"state": "continue", "final": False}
+        )
 
     def test_invalid_preflight_matrix_fails_closed(self):
         fixtures = {}
@@ -256,6 +375,17 @@ class RootWorkflowTests(unittest.TestCase):
         reproved_discovery = copy.deepcopy(discovery)
         reproved_discovery["revision"] = 8
         reproved_discovery["worker_confinement"] = worker()
+        stale_review = evaluate_root_workflow(metadata(), [reproved_discovery])
+        self.assertIn(
+            "stale_design_review", stale_review["review_gate"]["reasons"]
+        )
+        self.assertFalse(stale_review["execution_permission"]["root_mutation"])
+
+        current_review = review(design_digest="sha256:design-8")
+        current_review["design_revision"] = 8
+        current_review["independent_review"]["identity"] = "review-8"
+        reproved_discovery["design_review"] = current_review
+        reproved_discovery["design_digest"] = "sha256:design-8"
         reproved = evaluate_root_workflow(metadata(), [reproved_discovery])
         self.assertEqual(reproved["selected_topology"], "L1")
         self.assertEqual(reproved["authority_preflight"]["status"], "allow_generation")
@@ -309,6 +439,246 @@ class RootWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(waiting["selected_topology"], "L0")
 
+    def test_findings_require_complete_binding_dispositions_and_clearance(self):
+        advisory = metadata()
+        advisory_finding = finding("advisory", disposition="advisory")
+        advisory["design_review"]["independent_review"]["findings"] = [
+            advisory_finding
+        ]
+        advisory_result = evaluate_root_workflow(advisory)
+        self.assertEqual(advisory_result["review_gate"]["status"], "pass")
+        self.assertEqual(
+            advisory_result["review_gate"]["independent_review"]["findings"],
+            [advisory_finding],
+        )
+
+        for field in (
+            "identity",
+            "classification",
+            "criterion",
+            "affected_nodes",
+            "sanitized_evidence",
+            "rationale",
+            "clearance_condition",
+            "waiver_policy",
+        ):
+            with self.subTest(missing_finding_field=field):
+                malformed = metadata()
+                malformed_finding = finding()
+                del malformed_finding[field]
+                malformed["design_review"]["independent_review"]["findings"] = [
+                    malformed_finding
+                ]
+                malformed_result = evaluate_root_workflow(malformed)
+                self.assertIn(
+                    "malformed_review_finding",
+                    malformed_result["review_gate"]["reasons"],
+                )
+
+        duplicate = metadata()
+        duplicate["design_review"]["independent_review"]["findings"] = [
+            finding("advisory", disposition="advisory"),
+            finding("advisory", disposition="advisory"),
+        ]
+        self.assertIn(
+            "duplicate_finding_identity",
+            evaluate_root_workflow(duplicate)["review_gate"]["reasons"],
+        )
+
+        unresolved = metadata()
+        unresolved["design_review"]["independent_review"]["findings"] = [finding()]
+        unresolved_result = evaluate_root_workflow(unresolved)
+        self.assertIn(
+            "unresolved_must_fix", unresolved_result["review_gate"]["reasons"]
+        )
+
+        repaired_without_clearance = metadata()
+        repaired_without_clearance["design_review"]["independent_review"][
+            "findings"
+        ] = [finding(disposition="repaired")]
+        repaired_without_clearance_result = evaluate_root_workflow(
+            repaired_without_clearance
+        )
+        self.assertIn(
+            "missing_independent_clearance",
+            repaired_without_clearance_result["review_gate"]["reasons"],
+        )
+
+        repaired_without_repair = metadata()
+        repaired_finding = finding(disposition="repaired")
+        repaired_finding["clearance"] = {
+            "finding_identity": "F-1",
+            "review_identity": "review-7",
+            "design_digest": "sha256:design-7",
+        }
+        repaired_without_repair["design_review"]["independent_review"]["findings"] = [
+            repaired_finding
+        ]
+        self.assertIn(
+            "repair_count_mismatch",
+            evaluate_root_workflow(repaired_without_repair)["review_gate"]["reasons"],
+        )
+
+        exact_deviation = metadata()
+        deviation_finding = finding(disposition="human-authorized-deviation")
+        deviation_finding["waiver_policy"] = "human-authorized"
+        deviation_finding["clearance"] = {
+            "finding_identity": "F-1",
+            "design_revision": 7,
+            "decision_receipt": "decision:D-1",
+        }
+        exact_deviation["design_review"]["independent_review"]["findings"] = [
+            deviation_finding
+        ]
+        self.assertEqual(
+            evaluate_root_workflow(exact_deviation)["review_gate"]["status"], "pass"
+        )
+
+        unwaivable = copy.deepcopy(exact_deviation)
+        unwaivable["design_review"]["independent_review"]["findings"][0][
+            "waiver_policy"
+        ] = "unwaivable"
+        self.assertIn(
+            "unwaivable_finding",
+            evaluate_root_workflow(unwaivable)["review_gate"]["reasons"],
+        )
+
+        broad_approval = copy.deepcopy(exact_deviation)
+        broad_approval["design_review"]["independent_review"]["findings"][0][
+            "clearance"
+        ] = {"decision_receipt": "approval:all"}
+        self.assertIn(
+            "inexact_human_deviation",
+            evaluate_root_workflow(broad_approval)["review_gate"]["reasons"],
+        )
+
+
+    def test_one_repair_repeats_the_full_stack_and_a_second_repair_blocks(self):
+        repair_required = metadata()
+        repair_required["design_review"]["independent_review"]["verdict"] = "repair"
+        repair_required["design_review"]["independent_review"]["findings"] = [finding()]
+        repair_result = evaluate_root_workflow(repair_required)
+        self.assertEqual(repair_result["review_gate"]["status"], "repair_required")
+        self.assertEqual(
+            repair_result["review_gate"]["required_action"], "repair_design"
+        )
+        self.assertEqual(
+            repair_result["workflow_state"], {"state": "continue", "final": False}
+        )
+        self.assertFalse(repair_result["execution_permission"]["root_mutation"])
+        self.assertFalse(repair_result["execution_permission"]["delegated_work"])
+
+        repaired = metadata()
+        repaired["revision"] = 8
+        repaired["authority_preflight"]["revision"] = 8
+        repaired["design_digest"] = "sha256:design-8"
+        repaired["design_review"] = review(
+            design_digest="sha256:design-8", repair_count=1
+        )
+        repaired["design_review"]["design_revision"] = 8
+        repaired["design_review"]["previous_review"] = copy.deepcopy(
+            repair_required["design_review"]
+        )
+        repaired["design_review"]["independent_review"]["identity"] = "review-8"
+        omitted = evaluate_root_workflow(repaired)
+        self.assertIn("missing_prior_finding", omitted["review_gate"]["reasons"])
+
+        repaired_finding = finding(disposition="repaired")
+        repaired_finding["clearance"] = {
+            "finding_identity": "F-1",
+            "review_identity": "review-8",
+            "design_digest": "sha256:design-8",
+        }
+        repaired["design_review"]["independent_review"]["findings"] = [
+            repaired_finding
+        ]
+        repaired_result = evaluate_root_workflow(repaired)
+        self.assertEqual(repaired_result["review_gate"]["status"], "pass")
+        self.assertTrue(repaired_result["execution_permission"]["root_mutation"])
+
+        stale_self_check = copy.deepcopy(repaired)
+        stale_self_check["design_review"]["self_check"][
+            "design_digest"
+        ] = "sha256:design-7"
+        self.assertIn(
+            "self_check_digest_mismatch",
+            evaluate_root_workflow(stale_self_check)["review_gate"]["reasons"],
+        )
+
+        missing_previous_review = copy.deepcopy(repaired)
+        del missing_previous_review["design_review"]["previous_review"]
+        self.assertIn(
+            "missing_previous_review",
+            evaluate_root_workflow(missing_previous_review)["review_gate"]["reasons"],
+        )
+
+        unchanged_revision = copy.deepcopy(repaired)
+        unchanged_revision["design_review"]["previous_review"]["design_revision"] = 8
+        self.assertIn(
+            "repair_did_not_create_new_revision",
+            evaluate_root_workflow(unchanged_revision)["review_gate"]["reasons"],
+        )
+
+        substituted_finding = copy.deepcopy(repaired)
+        replacement = copy.deepcopy(repaired_finding)
+        replacement["identity"] = "F-2"
+        replacement["clearance"]["finding_identity"] = "F-2"
+        substituted_finding["design_review"]["independent_review"]["findings"] = [
+            replacement
+        ]
+        self.assertIn(
+            "missing_prior_finding",
+            evaluate_root_workflow(substituted_finding)["review_gate"]["reasons"],
+        )
+
+        altered_finding = copy.deepcopy(repaired)
+        altered_finding["design_review"]["independent_review"]["findings"][0][
+            "criterion"
+        ] = "different-criterion"
+        self.assertIn(
+            "altered_prior_finding",
+            evaluate_root_workflow(altered_finding)["review_gate"]["reasons"],
+        )
+
+        human_deviation = copy.deepcopy(repaired)
+        human_deviation["design_review"]["previous_review"]["independent_review"][
+            "findings"
+        ][0]["waiver_policy"] = "human-authorized"
+        human_finding = human_deviation["design_review"]["independent_review"][
+            "findings"
+        ][0]
+        human_finding["disposition"] = "human-authorized-deviation"
+        human_finding["waiver_policy"] = "human-authorized"
+        human_finding["clearance"] = {
+            "finding_identity": "F-1",
+            "design_revision": 8,
+            "decision_receipt": "decision:D-1",
+        }
+        self.assertEqual(
+            evaluate_root_workflow(human_deviation)["review_gate"]["status"], "pass"
+        )
+
+        second_repair = copy.deepcopy(repaired)
+        second_repair["design_review"]["independent_review"]["verdict"] = "repair"
+        second_finding = finding()
+        second_finding["identity"] = "F-2"
+        second_repair["design_review"]["independent_review"]["findings"].append(
+            second_finding
+        )
+        self.assertIn(
+            "repair_limit_exceeded",
+            evaluate_root_workflow(second_repair)["review_gate"]["reasons"],
+        )
+
+        blocked = metadata()
+        blocked["design_review"]["independent_review"]["verdict"] = "block"
+        blocked_result = evaluate_root_workflow(blocked)
+        self.assertIn(
+            "independent_review_blocked", blocked_result["review_gate"]["reasons"]
+        )
+        self.assertEqual(
+            blocked_result["workflow_state"], {"state": "blocked", "final": True}
+        )
 
 if __name__ == "__main__":
     unittest.main()
