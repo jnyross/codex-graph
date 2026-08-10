@@ -287,8 +287,7 @@ test("unwraps resolveTool envelopes from wait and read", async () => {
 
 
 // ── Dynamic-workflow pattern fixtures ───────────────────────────────────────
-// Shapes derived from real Grok/Claude orchestration patterns; see
-// docs/dynamic-workflow-testcase-catalog.md and testcases/.
+// Shapes derived from the same orchestration patterns as testcases/.
 
 test("atomic screen fan-out: verdicts terminal at first read need no waits (#13)", async () => {
   // Grok screen phase: one atomic screener per candidate; workers finish fast
