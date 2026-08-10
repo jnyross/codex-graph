@@ -444,6 +444,20 @@ function patternHasName(pattern, name) {
   return false;
 }
 
+function targetHasName(target, name) {
+  if (target?.type === "MemberExpression") {
+    return targetHasName(target.object, name);
+  }
+  if (target?.type === "ChainExpression") {
+    return targetHasName(target.expression, name);
+  }
+  return patternHasName(target, name);
+}
+
+function targetsRuntimeBinding(target) {
+  return ["runWorkflow", "module"].some((name) => targetHasName(target, name));
+}
+
 function assignmentToExport(node) {
   return (
     node?.type === "ExpressionStatement" &&
@@ -510,6 +524,13 @@ function parseExecutable(source) {
     statement.declarations.length === 1 &&
     statement.declarations[0].id.type === "Identifier" &&
     statement.declarations[0].id.name === "workflowStructure");
+  const guardedExports = program.body.filter(guardedExport);
+  const guardedConsequent = guardedExports[0]?.consequent;
+  const allowedExportAssignment = guardedExports.length === 1
+    ? (guardedConsequent.type === "BlockStatement"
+      ? guardedConsequent.body[0]
+      : guardedConsequent).expression
+    : null;
   let structureBindings = 0;
   let shadowedRuntimeBinding = false;
   let workflowRuns = 0;
@@ -533,6 +554,14 @@ function parseExecutable(source) {
       patternHasName(pattern, "runWorkflow") || patternHasName(pattern, "module"))) {
       shadowedRuntimeBinding = true;
     }
+    if (
+      (node.type === "AssignmentExpression" &&
+        node !== allowedExportAssignment &&
+        targetsRuntimeBinding(node.left)) ||
+      (node.type === "UpdateExpression" && targetsRuntimeBinding(node.argument))
+    ) {
+      shadowedRuntimeBinding = true;
+    }
     if (assignmentToExport(node)) workflowExports += 1;
     if (
       node.type === "CallExpression" &&
@@ -547,7 +576,7 @@ function parseExecutable(source) {
     declarations.length !== 1 ||
     structureBindings !== 1 ||
     shadowedRuntimeBinding ||
-    program.body.filter(guardedExport).length !== 1 ||
+    guardedExports.length !== 1 ||
     workflowExports !== 1 ||
     program.body.filter(awaitedWorkflowRun).length !== 1 ||
     workflowRuns !== 1

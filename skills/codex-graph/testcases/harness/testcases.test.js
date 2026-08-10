@@ -260,6 +260,10 @@ test("only one intended top-level workflow binding receives credit", () => {
     )],
     ["shadowed call", (source) =>
       `const runWorkflow = () => {};\n${source}`],
+    ["assigned no-op call", (source) =>
+      `runWorkflow = () => {};\n${source}`],
+    ["assigned module", (source) => `module = {};\n${source}`],
+    ["updated call", (source) => `runWorkflow++;\n${source}`],
     ["nested declaration", (source) => `{\n${source}\n}`],
     ["unguarded export", (source) => source.replace(
       'if (typeof module !== "undefined") module.exports = workflowStructure;',
