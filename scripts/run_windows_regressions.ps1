@@ -3,6 +3,9 @@ $ErrorActionPreference = "Stop"
 python skills/codex-graph/scripts/validate_skill.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+python skills/codex-graph/scripts/test_root_workflow.py
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 python skills/codex-graph/scripts/graph_coherence.py --selfcheck
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
