@@ -1,0 +1,73 @@
+{
+  "case_id": "adversarial-dual-validation",
+  "schema_version": "1",
+  "canonical_goal_digest": "71412ce86ee5d9d87786c742d6adb2ad34c1f9dc2ea4de8ea044ed36f881c426",
+  "role_instances": [
+    { "role": "contract_owner", "kind": "contract" },
+    { "role": "bundle_assembler", "kind": "integration" },
+    { "role": "validator_accuracy", "kind": "validator" },
+    { "role": "validator_completeness", "kind": "validator" },
+    { "role": "acceptance_gate", "kind": "gate" },
+    { "role": "repair", "kind": "repair" },
+    { "role": "revalidator", "kind": "validator" },
+    { "role": "accepted_terminal", "kind": "terminal" },
+    { "role": "failed_terminal", "kind": "terminal" }
+  ],
+  "topology": [
+    { "from": "contract_owner", "to": "bundle_assembler" },
+    { "from": "bundle_assembler", "to": "validator_accuracy" },
+    { "from": "bundle_assembler", "to": "validator_completeness" },
+    { "from": "validator_accuracy", "to": "acceptance_gate" },
+    { "from": "validator_completeness", "to": "acceptance_gate" },
+    { "from": "acceptance_gate", "to": "accepted_terminal", "outcome": "pass" },
+    { "from": "acceptance_gate", "to": "repair", "outcome": "revise" },
+    { "from": "repair", "to": "revalidator" },
+    { "from": "revalidator", "to": "accepted_terminal", "outcome": "pass" },
+    { "from": "revalidator", "to": "failed_terminal", "outcome": "fail" }
+  ],
+  "environments": {
+    "contract_owner": "local",
+    "bundle_assembler": "local",
+    "validator_accuracy": "local",
+    "validator_completeness": "local",
+    "acceptance_gate": "local",
+    "repair": "local",
+    "revalidator": "local",
+    "accepted_terminal": "local",
+    "failed_terminal": "local"
+  },
+  "concurrency": [["validator_accuracy", "validator_completeness"]],
+  "gates": [
+    { "role": "acceptance_gate", "outcomes": ["pass", "revise"] }
+  ],
+  "repair_edges": [
+    { "from": "acceptance_gate", "to": "repair" },
+    { "from": "repair", "to": "revalidator" }
+  ],
+  "terminal_paths": [
+    { "from": "acceptance_gate", "to": "accepted_terminal", "outcome": "pass" },
+    { "from": "revalidator", "to": "accepted_terminal", "outcome": "pass" },
+    { "from": "revalidator", "to": "failed_terminal", "outcome": "fail" }
+  ],
+  "collection": {
+    "read_first": true,
+    "read_after_wait": true,
+    "max_output_chars_per_item": 20000
+  },
+  "assertions": [
+    {
+      "id": "literal:validator-no-publication-authority",
+      "operator": "excludes_exact_text",
+      "roles": ["validator_accuracy", "validator_completeness", "revalidator"],
+      "field": "prompt",
+      "value": "you may approve the guide on your own"
+    },
+    {
+      "id": "literal:missing-verdict-never-passes",
+      "operator": "excludes_exact_text",
+      "roles": ["validator_accuracy", "validator_completeness", "revalidator"],
+      "field": "prompt",
+      "value": "treat a missing verdict as a pass"
+    }
+  ]
+}

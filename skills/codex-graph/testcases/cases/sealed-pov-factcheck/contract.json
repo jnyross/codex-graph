@@ -1,0 +1,308 @@
+{
+  "case_id": "sealed-pov-factcheck",
+  "schema_version": "1",
+  "canonical_goal_digest": "ace91cbaee6e9beef1e580804d92f21402ddf7110896d1846b745992a18ab374",
+  "role_instances": [
+    {
+      "role": "contract_owner",
+      "kind": "contract"
+    },
+    {
+      "role": "pack_builder_01",
+      "kind": "discovery"
+    },
+    {
+      "role": "pack_builder_02",
+      "kind": "discovery"
+    },
+    {
+      "role": "pack_builder_03",
+      "kind": "discovery"
+    },
+    {
+      "role": "pack_builder_04",
+      "kind": "discovery"
+    },
+    {
+      "role": "pack_builder_05",
+      "kind": "discovery"
+    },
+    {
+      "role": "pack_builder_06",
+      "kind": "discovery"
+    },
+    {
+      "role": "pack_builder_07",
+      "kind": "discovery"
+    },
+    {
+      "role": "pack_builder_08",
+      "kind": "discovery"
+    },
+    {
+      "role": "fact_checker_01",
+      "kind": "validator"
+    },
+    {
+      "role": "fact_checker_02",
+      "kind": "validator"
+    },
+    {
+      "role": "fact_checker_03",
+      "kind": "validator"
+    },
+    {
+      "role": "fact_checker_04",
+      "kind": "validator"
+    },
+    {
+      "role": "fact_checker_05",
+      "kind": "validator"
+    },
+    {
+      "role": "fact_checker_06",
+      "kind": "validator"
+    },
+    {
+      "role": "fact_checker_07",
+      "kind": "validator"
+    },
+    {
+      "role": "fact_checker_08",
+      "kind": "validator"
+    },
+    {
+      "role": "acceptance_gate",
+      "kind": "gate"
+    },
+    {
+      "role": "result_terminal",
+      "kind": "terminal"
+    },
+    {
+      "role": "unverifiable_terminal",
+      "kind": "terminal"
+    }
+  ],
+  "topology": [
+    {
+      "from": "contract_owner",
+      "to": "pack_builder_01"
+    },
+    {
+      "from": "contract_owner",
+      "to": "pack_builder_02"
+    },
+    {
+      "from": "contract_owner",
+      "to": "pack_builder_03"
+    },
+    {
+      "from": "contract_owner",
+      "to": "pack_builder_04"
+    },
+    {
+      "from": "contract_owner",
+      "to": "pack_builder_05"
+    },
+    {
+      "from": "contract_owner",
+      "to": "pack_builder_06"
+    },
+    {
+      "from": "contract_owner",
+      "to": "pack_builder_07"
+    },
+    {
+      "from": "contract_owner",
+      "to": "pack_builder_08"
+    },
+    {
+      "from": "pack_builder_01",
+      "to": "fact_checker_01"
+    },
+    {
+      "from": "pack_builder_02",
+      "to": "fact_checker_02"
+    },
+    {
+      "from": "pack_builder_03",
+      "to": "fact_checker_03"
+    },
+    {
+      "from": "pack_builder_04",
+      "to": "fact_checker_04"
+    },
+    {
+      "from": "pack_builder_05",
+      "to": "fact_checker_05"
+    },
+    {
+      "from": "pack_builder_06",
+      "to": "fact_checker_06"
+    },
+    {
+      "from": "pack_builder_07",
+      "to": "fact_checker_07"
+    },
+    {
+      "from": "pack_builder_08",
+      "to": "fact_checker_08"
+    },
+    {
+      "from": "fact_checker_01",
+      "to": "acceptance_gate"
+    },
+    {
+      "from": "fact_checker_02",
+      "to": "acceptance_gate"
+    },
+    {
+      "from": "fact_checker_03",
+      "to": "acceptance_gate"
+    },
+    {
+      "from": "fact_checker_04",
+      "to": "acceptance_gate"
+    },
+    {
+      "from": "fact_checker_05",
+      "to": "acceptance_gate"
+    },
+    {
+      "from": "fact_checker_06",
+      "to": "acceptance_gate"
+    },
+    {
+      "from": "fact_checker_07",
+      "to": "acceptance_gate"
+    },
+    {
+      "from": "fact_checker_08",
+      "to": "acceptance_gate"
+    },
+    {
+      "from": "acceptance_gate",
+      "to": "result_terminal",
+      "outcome": "complete"
+    },
+    {
+      "from": "acceptance_gate",
+      "to": "unverifiable_terminal",
+      "outcome": "unverifiable"
+    }
+  ],
+  "environments": {
+    "contract_owner": "local",
+    "pack_builder_01": "local",
+    "pack_builder_02": "local",
+    "pack_builder_03": "local",
+    "pack_builder_04": "local",
+    "pack_builder_05": "local",
+    "pack_builder_06": "local",
+    "pack_builder_07": "local",
+    "pack_builder_08": "local",
+    "fact_checker_01": "local",
+    "fact_checker_02": "local",
+    "fact_checker_03": "local",
+    "fact_checker_04": "local",
+    "fact_checker_05": "local",
+    "fact_checker_06": "local",
+    "fact_checker_07": "local",
+    "fact_checker_08": "local",
+    "acceptance_gate": "local",
+    "result_terminal": "local",
+    "unverifiable_terminal": "local"
+  },
+  "concurrency": [
+    [
+      "pack_builder_01",
+      "pack_builder_02",
+      "pack_builder_03",
+      "pack_builder_04",
+      "pack_builder_05",
+      "pack_builder_06",
+      "pack_builder_07",
+      "pack_builder_08"
+    ],
+    [
+      "fact_checker_01",
+      "fact_checker_02",
+      "fact_checker_03",
+      "fact_checker_04",
+      "fact_checker_05",
+      "fact_checker_06",
+      "fact_checker_07",
+      "fact_checker_08"
+    ]
+  ],
+  "gates": [
+    {
+      "role": "acceptance_gate",
+      "outcomes": [
+        "complete",
+        "unverifiable"
+      ]
+    }
+  ],
+  "repair_edges": [],
+  "terminal_paths": [
+    {
+      "from": "acceptance_gate",
+      "to": "result_terminal",
+      "outcome": "complete"
+    },
+    {
+      "from": "acceptance_gate",
+      "to": "unverifiable_terminal",
+      "outcome": "unverifiable"
+    }
+  ],
+  "collection": {
+    "read_first": true,
+    "read_after_wait": true,
+    "max_output_chars_per_item": 20000
+  },
+  "assertions": [
+    {
+      "id": "literal:builders-stay-sealed",
+      "operator": "excludes_exact_text",
+      "roles": [
+        "pack_builder_01",
+        "pack_builder_02",
+        "pack_builder_03",
+        "pack_builder_04",
+        "pack_builder_05",
+        "pack_builder_06",
+        "pack_builder_07",
+        "pack_builder_08"
+      ],
+      "field": "prompt",
+      "value": "compare against the other destinations"
+    },
+    {
+      "id": "literal:workers-do-not-own-panel-pass",
+      "operator": "excludes_exact_text",
+      "roles": [
+        "pack_builder_01",
+        "pack_builder_02",
+        "pack_builder_03",
+        "pack_builder_04",
+        "pack_builder_05",
+        "pack_builder_06",
+        "pack_builder_07",
+        "pack_builder_08",
+        "fact_checker_01",
+        "fact_checker_02",
+        "fact_checker_03",
+        "fact_checker_04",
+        "fact_checker_05",
+        "fact_checker_06",
+        "fact_checker_07",
+        "fact_checker_08"
+      ],
+      "field": "prompt",
+      "value": "all audit lanes must pass"
+    }
+  ]
+}

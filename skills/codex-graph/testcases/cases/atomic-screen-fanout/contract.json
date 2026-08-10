@@ -1,0 +1,451 @@
+{
+  "case_id": "atomic-screen-fanout",
+  "schema_version": "1",
+  "canonical_goal_digest": "d8aa278d2d0a7bf5e3fd055bb34e82bb0a6232aaa69412df6473a2c700bbff46",
+  "role_instances": [
+    {
+      "role": "contract_owner",
+      "kind": "contract"
+    },
+    {
+      "role": "screener_01",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_02",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_03",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_04",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_05",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_06",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_07",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_08",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_09",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_10",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_11",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_12",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_13",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_14",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_15",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_16",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_17",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_18",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_19",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_20",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_21",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_22",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_23",
+      "kind": "validator"
+    },
+    {
+      "role": "screener_24",
+      "kind": "validator"
+    },
+    {
+      "role": "pool_policy_owner",
+      "kind": "integration"
+    },
+    {
+      "role": "result_terminal",
+      "kind": "terminal"
+    }
+  ],
+  "topology": [
+    {
+      "from": "contract_owner",
+      "to": "screener_01"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_02"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_03"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_04"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_05"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_06"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_07"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_08"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_09"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_10"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_11"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_12"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_13"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_14"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_15"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_16"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_17"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_18"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_19"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_20"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_21"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_22"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_23"
+    },
+    {
+      "from": "contract_owner",
+      "to": "screener_24"
+    },
+    {
+      "from": "screener_01",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_02",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_03",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_04",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_05",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_06",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_07",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_08",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_09",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_10",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_11",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_12",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_13",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_14",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_15",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_16",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_17",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_18",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_19",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_20",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_21",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_22",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_23",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "screener_24",
+      "to": "pool_policy_owner"
+    },
+    {
+      "from": "pool_policy_owner",
+      "to": "result_terminal",
+      "outcome": "complete"
+    }
+  ],
+  "environments": {
+    "contract_owner": "local",
+    "screener_01": "local",
+    "screener_02": "local",
+    "screener_03": "local",
+    "screener_04": "local",
+    "screener_05": "local",
+    "screener_06": "local",
+    "screener_07": "local",
+    "screener_08": "local",
+    "screener_09": "local",
+    "screener_10": "local",
+    "screener_11": "local",
+    "screener_12": "local",
+    "screener_13": "local",
+    "screener_14": "local",
+    "screener_15": "local",
+    "screener_16": "local",
+    "screener_17": "local",
+    "screener_18": "local",
+    "screener_19": "local",
+    "screener_20": "local",
+    "screener_21": "local",
+    "screener_22": "local",
+    "screener_23": "local",
+    "screener_24": "local",
+    "pool_policy_owner": "local",
+    "result_terminal": "local"
+  },
+  "concurrency": [
+    [
+      "screener_01",
+      "screener_02",
+      "screener_03",
+      "screener_04",
+      "screener_05",
+      "screener_06",
+      "screener_07",
+      "screener_08",
+      "screener_09",
+      "screener_10",
+      "screener_11",
+      "screener_12",
+      "screener_13",
+      "screener_14",
+      "screener_15",
+      "screener_16",
+      "screener_17",
+      "screener_18",
+      "screener_19",
+      "screener_20",
+      "screener_21",
+      "screener_22",
+      "screener_23",
+      "screener_24"
+    ]
+  ],
+  "gates": [],
+  "repair_edges": [],
+  "terminal_paths": [
+    {
+      "from": "pool_policy_owner",
+      "to": "result_terminal",
+      "outcome": "complete"
+    }
+  ],
+  "collection": {
+    "read_first": true,
+    "read_after_wait": true,
+    "max_output_chars_per_item": 20000
+  },
+  "assertions": [
+    {
+      "id": "literal:screeners-do-not-rank",
+      "operator": "excludes_exact_text",
+      "roles": [
+        "screener_01",
+        "screener_02",
+        "screener_03",
+        "screener_04",
+        "screener_05",
+        "screener_06",
+        "screener_07",
+        "screener_08",
+        "screener_09",
+        "screener_10",
+        "screener_11",
+        "screener_12",
+        "screener_13",
+        "screener_14",
+        "screener_15",
+        "screener_16",
+        "screener_17",
+        "screener_18",
+        "screener_19",
+        "screener_20",
+        "screener_21",
+        "screener_22",
+        "screener_23",
+        "screener_24"
+      ],
+      "field": "prompt",
+      "value": "rank the survivors"
+    },
+    {
+      "id": "literal:screeners-do-not-own-panel-pass",
+      "operator": "excludes_exact_text",
+      "roles": [
+        "screener_01",
+        "screener_02",
+        "screener_03",
+        "screener_04",
+        "screener_05",
+        "screener_06",
+        "screener_07",
+        "screener_08",
+        "screener_09",
+        "screener_10",
+        "screener_11",
+        "screener_12",
+        "screener_13",
+        "screener_14",
+        "screener_15",
+        "screener_16",
+        "screener_17",
+        "screener_18",
+        "screener_19",
+        "screener_20",
+        "screener_21",
+        "screener_22",
+        "screener_23",
+        "screener_24"
+      ],
+      "field": "prompt",
+      "value": "all screeners must pass"
+    }
+  ]
+}
