@@ -87,6 +87,31 @@ def _blocked_admission(
     return result
 
 
+def _gap_free_ranges(total: object, ranges: object) -> bool:
+    if (
+        not isinstance(total, int)
+        or isinstance(total, bool)
+        or total < 0
+        or not isinstance(ranges, list)
+    ):
+        return False
+    covered = 0
+    for byte_range in ranges:
+        if (
+            not isinstance(byte_range, list)
+            or len(byte_range) != 2
+            or not all(
+                isinstance(offset, int) and not isinstance(offset, bool)
+                for offset in byte_range
+            )
+            or byte_range[0] != covered
+            or byte_range[1] <= byte_range[0]
+        ):
+            return False
+        covered = byte_range[1]
+    return covered == total
+
+
 def _terminal_complete(
     capability: object,
     terminal: object,
@@ -124,10 +149,33 @@ def _terminal_complete(
             and pages[-1]["next_cursor"] is None
         )
     if capability == "bounded_list":
-        return returned_ids == target_ids and (
-            terminal.get("kind") == "authoritative_total"
-            and terminal.get("total") == len(set(returned_ids))
-            or terminal.get("kind") == "documented_short_page_terminal"
+        if returned_ids != target_ids:
+            return False
+        if terminal.get("kind") == "authoritative_total":
+            total = terminal.get("total")
+            return (
+                isinstance(total, int)
+                and not isinstance(total, bool)
+                and total == len(set(returned_ids))
+            )
+        contract = terminal.get("tool_contract")
+        count = terminal.get("returned_count")
+        limit = terminal.get("page_limit")
+        return (
+            terminal.get("kind") == "documented_short_page_terminal"
+            and isinstance(contract, dict)
+            and isinstance(contract.get("reference"), str)
+            and bool(contract["reference"])
+            and isinstance(contract.get("digest"), str)
+            and contract["digest"].startswith("sha256:")
+            and contract.get("short_page_rule")
+            == "returned_count_lt_page_limit"
+            and isinstance(count, int)
+            and not isinstance(count, bool)
+            and count == len(returned_ids)
+            and isinstance(limit, int)
+            and not isinstance(limit, bool)
+            and count < limit
         )
     if capability == "object_blob":
         positive_boundary = (
@@ -147,32 +195,13 @@ def _terminal_complete(
     if capability != "range":
         return False
 
-    total = terminal.get("total_length")
-    ranges = terminal.get("ranges")
-    if (
-        len(target_ids) != 1
-        or terminal.get("kind") != "gap_free_ranges"
-        or not isinstance(total, int)
-        or isinstance(total, bool)
-        or total < 0
-        or not isinstance(ranges, list)
-    ):
-        return False
-    covered = 0
-    for byte_range in ranges:
-        if (
-            not isinstance(byte_range, list)
-            or len(byte_range) != 2
-            or not all(
-                isinstance(offset, int) and not isinstance(offset, bool)
-                for offset in byte_range
-            )
-            or byte_range[0] != covered
-            or byte_range[1] <= byte_range[0]
-        ):
-            return False
-        covered = byte_range[1]
-    return covered == total
+    return (
+        len(target_ids) == 1
+        and terminal.get("kind") == "gap_free_ranges"
+        and _gap_free_ranges(
+            terminal.get("total_length"), terminal.get("ranges")
+        )
+    )
 
 
 def _recovery_reasons(proof: object) -> list[str]:
@@ -191,14 +220,29 @@ def _recovery_reasons(proof: object) -> list[str]:
     elif isinstance(bound, int) and len(attempts) > bound:
         reasons.append("recovery_bound_exceeded")
 
-    seen_inputs = set()
-    prior_completed = None
-    prior_remaining = None
+    seed = proof.get("recovery_seed")
+    seed_valid = (
+        isinstance(seed, dict)
+        and isinstance(seed.get("request_fingerprint"), str)
+        and bool(seed["request_fingerprint"])
+        and isinstance(seed.get("completed_units"), int)
+        and not isinstance(seed["completed_units"], bool)
+        and seed["completed_units"] >= 0
+        and isinstance(seed.get("remaining_units"), int)
+        and not isinstance(seed["remaining_units"], bool)
+        and seed["remaining_units"] >= 0
+    )
+    if attempts and not seed_valid:
+        reasons.append("missing_recovery_seed")
+
+    seen_inputs = {seed["request_fingerprint"]} if seed_valid else set()
+    prior_completed = seed["completed_units"] if seed_valid else None
+    prior_remaining = seed["remaining_units"] if seed_valid else None
     for index, attempt in enumerate(attempts):
         if (
             not isinstance(attempt, dict)
-            or not isinstance(attempt.get("input"), str)
-            or not attempt["input"]
+            or not isinstance(attempt.get("request_fingerprint"), str)
+            or not attempt["request_fingerprint"]
             or not isinstance(attempt.get("completed_units"), int)
             or isinstance(attempt["completed_units"], bool)
             or attempt["completed_units"] < 0
@@ -208,9 +252,9 @@ def _recovery_reasons(proof: object) -> list[str]:
         ):
             reasons.append("malformed_recovery_attempt")
             continue
-        if attempt["input"] in seen_inputs:
+        if attempt["request_fingerprint"] in seen_inputs:
             reasons.append("repeated_incomplete_input")
-        seen_inputs.add(attempt["input"])
+        seen_inputs.add(attempt["request_fingerprint"])
 
         if prior_completed is not None and not (
             attempt["completed_units"] > prior_completed
@@ -224,7 +268,7 @@ def _recovery_reasons(proof: object) -> list[str]:
     return list(dict.fromkeys(reasons))
 
 
-def _acceptance_path_complete(path: object, target_ids: list[str]) -> bool:
+def _acceptance_path_complete(path: object, targets: list[dict]) -> bool:
     if not isinstance(path, dict):
         return False
     capabilities = []
@@ -235,17 +279,97 @@ def _acceptance_path_complete(path: object, target_ids: list[str]) -> bool:
         "independent_post_state",
     ):
         capability = path.get(name)
+        contract = capability.get("tool_contract") if isinstance(capability, dict) else None
+        bindings = capability.get("target_bindings") if isinstance(capability, dict) else None
         if (
-            not isinstance(capability, dict)
-            or not isinstance(capability.get("locator"), str)
-            or not capability["locator"]
-            or capability.get("target_ids") != target_ids
+            not isinstance(contract, dict)
+            or not isinstance(contract.get("reference"), str)
+            or not contract["reference"]
+            or not isinstance(contract.get("digest"), str)
+            or not contract["digest"].startswith("sha256:")
+            or not isinstance(bindings, list)
+            or len(bindings) != len(targets)
+            or any(
+                not isinstance(binding, dict)
+                or {
+                    key: binding.get(key)
+                    for key in ("identity", "version", "state")
+                }
+                != target
+                or not isinstance(binding.get("locator"), str)
+                or not binding["locator"]
+                for binding, target in zip(bindings, targets)
+            )
+            or len({binding["locator"] for binding in bindings}) != len(bindings)
         ):
             return False
         capabilities.append(capability)
     return (
         capabilities[3].get("actor") == "root"
-        and capabilities[2]["locator"] != capabilities[3]["locator"]
+        and all(
+            receipt["locator"] != post_state["locator"]
+            for receipt, post_state in zip(
+                capabilities[2]["target_bindings"],
+                capabilities[3]["target_bindings"],
+            )
+        )
+    )
+
+
+def _field_coverage_complete(
+    proof: dict,
+    predicate: dict,
+    target_ids: list[str],
+    required_fields: list[str],
+) -> bool:
+    content_fields = predicate.get("content_fields")
+    coverage = proof.get("field_coverage")
+    if (
+        not _string_list(content_fields)
+        or not set(content_fields) <= set(required_fields)
+        or proof.get("content_fields") != content_fields
+        or not isinstance(coverage, list)
+        or len(coverage) != len(target_ids) * len(required_fields)
+    ):
+        return False
+    expected = {
+        (target_id, field)
+        for target_id in target_ids
+        for field in required_fields
+    }
+    actual = {
+        (entry.get("item_id"), entry.get("field"))
+        for entry in coverage
+        if isinstance(entry, dict)
+    }
+    if actual != expected or len(actual) != len(coverage):
+        return False
+    return all(
+        isinstance(entry.get("locator"), str)
+        and bool(entry["locator"])
+        and (
+            entry.get("kind") == "gap_free_content"
+            and _gap_free_ranges(
+                entry.get("total_length"), entry.get("ranges")
+            )
+            if entry["field"] in content_fields
+            else entry.get("kind") == "complete_field"
+        )
+        for entry in coverage
+    )
+
+
+def _aggregate_scope_complete(
+    predicate: dict, proof: dict, target_ids: list[str]
+) -> bool:
+    aggregate_scope = predicate.get("aggregate_scope")
+    return (
+        isinstance(aggregate_scope, dict)
+        and isinstance(aggregate_scope.get("identity"), str)
+        and bool(aggregate_scope["identity"])
+        and aggregate_scope.get("target_ids") == target_ids
+        and isinstance(aggregate_scope.get("requires_complete_set"), bool)
+        and proof.get("aggregate_scope") == aggregate_scope
     )
 
 
@@ -318,8 +442,10 @@ def _transport_gate(
         and targets_valid
         and bool(required_fields)
         and len(required_fields) == len(set(required_fields))
-        and _acceptance_path_complete(admission.get("acceptance_path"), target_ids)
+        and _acceptance_path_complete(admission.get("acceptance_path"), targets)
         and isinstance(proof, dict)
+        and isinstance(proof.get("proof_id"), str)
+        and bool(proof["proof_id"])
         and proof.get("mutation_id") == mutation_id
         and proof.get("action") == admission["action"]
         and proof.get("target_state") == admission["target_state"]
@@ -328,6 +454,10 @@ def _transport_gate(
         and proof.get("requested_scope") == target_ids
         and proof.get("returned_scope") == target_ids
         and proof.get("required_fields") == required_fields
+        and _field_coverage_complete(
+            proof, predicate, target_ids, required_fields
+        )
+        and _aggregate_scope_complete(predicate, proof, target_ids)
         and _terminal_complete(
             proof.get("capability"),
             proof.get("terminal_witness"),
@@ -365,7 +495,10 @@ def _transport_gate(
         for target_id in target_ids
         if any(signal["scope"] in {target_id, "call"} for signal in signals)
     ]
-    if proof.get("aggregate_required") is True and blocked_items:
+    if (
+        predicate["aggregate_scope"]["requires_complete_set"]
+        and blocked_items
+    ):
         blocked_items = target_ids
     candidate_ids = [
         target_id for target_id in target_ids if target_id not in blocked_items
@@ -421,6 +554,25 @@ def _classification_record_complete(record: object) -> bool:
     )
 
 
+def _expected_classification_binding(
+    admission: dict, context: dict, target: dict | None = None
+) -> dict:
+    binding = {
+        "transport_proof_id": context["proof"]["proof_id"],
+        "mutation_id": context["mutation_id"],
+        "action": admission["action"],
+        "target_state": admission["target_state"],
+        "predicate_identity": context["predicate"]["identity"],
+        "required_fields": context["proof"]["required_fields"],
+        "content_fields": context["predicate"]["content_fields"],
+        "aggregate_scope": context["predicate"]["aggregate_scope"],
+        "target_bindings": context["targets"],
+    }
+    if target is not None:
+        binding["target_binding"] = target
+    return binding
+
+
 def _classification_gate(
     admission: dict, context: dict
 ) -> tuple[dict | None, dict]:
@@ -432,13 +584,8 @@ def _classification_gate(
         security.get("action_classification") if isinstance(security, dict) else None
     )
     binding = security.get("binding") if isinstance(security, dict) else None
-    binding_complete = (
-        isinstance(binding, dict)
-        and binding.get("mutation_id") == context["mutation_id"]
-        and binding.get("action") == admission.get("action")
-        and binding.get("target_state") == admission.get("target_state")
-        and binding.get("predicate_identity") == context["predicate"].get("identity")
-        and binding.get("target_bindings") == context["targets"]
+    binding_complete = binding == _expected_classification_binding(
+        admission, context
     )
     records_complete = (
         isinstance(item_records, list)
@@ -447,8 +594,15 @@ def _classification_gate(
             item.get("item_id") for item in item_records if isinstance(item, dict)
         ]
         == context["target_ids"]
-        and all(_classification_record_complete(item) for item in item_records)
+        and all(
+            _classification_record_complete(item)
+            and item.get("input_binding")
+            == _expected_classification_binding(admission, context, target)
+            for item, target in zip(item_records, context["targets"])
+        )
         and _classification_record_complete(action_record)
+        and action_record.get("input_binding")
+        == _expected_classification_binding(admission, context)
     )
     if not (
         isinstance(security, dict)
@@ -508,6 +662,16 @@ def _authorization_gate(
         protected_items = context["candidate_ids"]
 
     authorization = classification["security"].get("authorization")
+    decision = (
+        authorization.get("normalized_decision")
+        if isinstance(authorization, dict)
+        else None
+    )
+    parent_receipt = (
+        authorization.get("parent_receipt")
+        if isinstance(authorization, dict)
+        else None
+    )
     current_revision = (
         isinstance(queue_revision, int) and not isinstance(queue_revision, bool)
     )
@@ -515,19 +679,28 @@ def _authorization_gate(
         isinstance(authorization, dict)
         and isinstance(authorization.get("receipt_id"), str)
         and bool(authorization["receipt_id"])
+        and isinstance(authorization.get("decision_identity"), str)
+        and bool(authorization["decision_identity"])
+        and isinstance(parent_receipt, dict)
+        and isinstance(parent_receipt.get("reference"), str)
+        and bool(parent_receipt["reference"])
+        and parent_receipt.get("validator") == "root_parent"
+        and parent_receipt.get("validated_decision_identity")
+        == authorization["decision_identity"]
+        and isinstance(decision, dict)
+        and decision.get("identity") == authorization["decision_identity"]
+        and decision.get("choice") == "authorize_exact_mutation"
         and current_revision
-        and authorization.get("queue_revision") == queue_revision
-        and authorization.get("mutation_id") == context["mutation_id"]
-        and authorization.get("action") == admission.get("action")
-        and authorization.get("target_state") == admission.get("target_state")
-        and _string_list(authorization.get("item_ids"))
-        and bool(authorization["item_ids"])
-        and len(authorization["item_ids"]) == len(set(authorization["item_ids"]))
-        and set(authorization["item_ids"]) <= set(context["target_ids"])
+        and decision.get("queue_revision") == queue_revision
+        and decision.get("mutation_id") == context["mutation_id"]
+        and decision.get("action") == admission.get("action")
+        and decision.get("target_state") == admission.get("target_state")
+        and _string_list(decision.get("item_ids"))
+        and bool(decision["item_ids"])
+        and len(decision["item_ids"]) == len(set(decision["item_ids"]))
+        and set(decision["item_ids"]) <= set(context["target_ids"])
     )
-    authorized_items = (
-        set(authorization["item_ids"]) if authorization_valid else set()
-    )
+    authorized_items = set(decision["item_ids"]) if authorization_valid else set()
     authorization_blocked = [
         target_id
         for target_id in protected_items
@@ -833,6 +1006,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
                 reasons.append("worker_mutation_not_root_owned")
             else:
                 mutations.append(mutation)
+                mutation_owners.setdefault(mutation["identity"], set()).add("root")
 
             reproved_worker = event.get("worker_confinement")
             reproof_reasons = _worker_reasons(
@@ -919,14 +1093,17 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
         and mutation_admission["status"] == "allow"
     )
     delegation_may_continue = not runtime_decision and not human_decision_required
+    delegated_work = delegation_may_continue and selected_topology != "L0"
+    mutation_blocked = (
+        mutation_admission is not None
+        and mutation_admission["status"] == "blocked"
+    )
     return {
         "authority_preflight": authority_preflight,
         "selected_topology": selected_topology,
         "execution_permission": {
             "root_mutation": root_may_execute and bool(mutations),
-            "delegated_work": (
-                delegation_may_continue and selected_topology != "L0"
-            ),
+            "delegated_work": delegated_work,
             "delegated_mutation": False,
             "stopped_workers": stopped_workers,
         },
@@ -935,16 +1112,16 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
         "mutation_admission": mutation_admission,
         "workflow_state": {
             "state": (
-                "blocked"
-                if mutation_admission is not None
-                and mutation_admission["status"] == "blocked"
-                else "human_decision_required"
+                "human_decision_required"
                 if human_decision_required
                 else "continue"
+                if not mutation_blocked or delegated_work
+                else "blocked"
             ),
             "final": (
-                mutation_admission is not None
-                and mutation_admission["status"] == "blocked"
+                mutation_blocked
+                and not delegated_work
+                and not human_decision_required
             ),
         },
     }
