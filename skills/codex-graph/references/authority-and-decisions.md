@@ -174,6 +174,7 @@ The durable checkpoint contains:
 - plan and queue revisions;
 - decision receipt;
 - completed work and evidence;
+- frozen-design review state and whether its automatic repair was used;
 - every action attempt and canonical target;
 - pending and invalidated work;
 - dependency closure;

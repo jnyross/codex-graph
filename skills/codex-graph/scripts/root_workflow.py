@@ -349,6 +349,7 @@ def _blocked_result(
     stopped_workers: list[str],
     revision: object = None,
     review_gate: dict | None = None,
+    review_checkpoint: dict | None = None,
 ) -> dict:
     preflight = {
         "revision": revision,
@@ -371,10 +372,15 @@ def _blocked_result(
         "observed_effects": observed_effects,
         "workflow_state": {"state": "blocked", "final": True},
         "review_gate": review_gate or {"status": "not_evaluated", "reasons": []},
+        "review_checkpoint": review_checkpoint,
     }
 
 
-def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
+def evaluate_root_workflow(
+    metadata: object,
+    events: object = (),
+    review_checkpoint: object = None,
+) -> dict:
     """Evaluate authority admission without performing or accepting any work."""
     if not isinstance(metadata, dict):
         return _blocked_result(
@@ -409,6 +415,30 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
         reasons.append("malformed_authority_preflight_revision")
     elif revision != metadata.get("revision"):
         reasons.append("stale_authority_preflight")
+
+    checkpoint_valid = review_checkpoint is None
+    prior_repair_used = False
+    if review_checkpoint is not None:
+        if (
+            not isinstance(review_checkpoint, dict)
+            or not isinstance(review_checkpoint.get("design_revision"), int)
+            or isinstance(review_checkpoint.get("design_revision"), bool)
+            or not isinstance(review_checkpoint.get("design_digest"), str)
+            or not review_checkpoint["design_digest"]
+            or not isinstance(
+                review_checkpoint.get("automatic_repair_used"), bool
+            )
+        ):
+            reasons.append("malformed_review_checkpoint")
+        else:
+            checkpoint_valid = True
+            prior_repair_used = review_checkpoint["automatic_repair_used"]
+            if (
+                isinstance(revision, int)
+                and not isinstance(revision, bool)
+                and review_checkpoint["design_revision"] > revision
+            ):
+                reasons.append("stale_review_checkpoint")
 
     decision_loops = preflight.get("reachable_decision_loops")
     if not _string_list(decision_loops):
@@ -594,7 +624,52 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
             current_design_digest,
             allow_previous=True,
         )
+        if checkpoint_valid:
+            repair_count = review_gate.get("repair_count")
+            verdict = review_gate.get("independent_review", {}).get("verdict")
+            checkpoint_reasons = []
+            if prior_repair_used:
+                if repair_count != 1:
+                    checkpoint_reasons.append("repair_count_mismatch")
+                else:
+                    previous_review = review_gate.get("previous_review")
+                    if (
+                        not isinstance(previous_review, dict)
+                        or previous_review.get("design_revision")
+                        != review_checkpoint["design_revision"]
+                        or previous_review.get("design_digest")
+                        != review_checkpoint["design_digest"]
+                    ):
+                        checkpoint_reasons.append("review_checkpoint_mismatch")
+                if verdict == "repair":
+                    checkpoint_reasons.append("repair_limit_exceeded")
+            elif repair_count == 1:
+                checkpoint_reasons.append("unproved_repair_transition")
+            if checkpoint_reasons:
+                review_gate["reasons"] = list(
+                    dict.fromkeys(review_gate["reasons"] + checkpoint_reasons)
+                )
+                review_gate["status"] = "block"
+                review_gate.pop("required_action", None)
         reasons.extend(review_gate["reasons"])
+
+    next_review_checkpoint = (
+        review_checkpoint if isinstance(review_checkpoint, dict) else None
+    )
+    if (
+        review_gate["status"] != "not_applicable"
+        and isinstance(review_gate.get("design_revision"), int)
+        and not isinstance(review_gate["design_revision"], bool)
+        and isinstance(review_gate.get("design_digest"), str)
+        and review_gate["design_digest"]
+    ):
+        next_review_checkpoint = {
+            "design_revision": review_gate["design_revision"],
+            "design_digest": review_gate["design_digest"],
+            "automatic_repair_used": (
+                prior_repair_used or review_gate["status"] == "repair_required"
+            ),
+        }
 
 
     if reasons:
@@ -605,6 +680,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
             stopped_workers,
             revision=revision,
             review_gate=review_gate,
+            review_checkpoint=next_review_checkpoint,
         )
 
     selected_topology = "L0" if decision_loops else generic_topology
@@ -650,6 +726,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
         "retained_evidence": retained_evidence,
         "observed_effects": observed_effects,
         "review_gate": review_gate,
+        "review_checkpoint": next_review_checkpoint,
         "workflow_state": {
             "state": "human_decision_required"
             if human_decision_required

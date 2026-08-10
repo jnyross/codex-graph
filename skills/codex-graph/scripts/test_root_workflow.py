@@ -567,6 +567,7 @@ class RootWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(repair_result["execution_permission"]["root_mutation"])
         self.assertFalse(repair_result["execution_permission"]["delegated_work"])
+        review_checkpoint = repair_result["review_checkpoint"]
 
         repaired = metadata()
         repaired["revision"] = 8
@@ -580,7 +581,9 @@ class RootWorkflowTests(unittest.TestCase):
             repair_required["design_review"]
         )
         repaired["design_review"]["independent_review"]["identity"] = "review-8"
-        omitted = evaluate_root_workflow(repaired)
+        omitted = evaluate_root_workflow(
+            repaired, review_checkpoint=review_checkpoint
+        )
         self.assertIn("missing_prior_finding", omitted["review_gate"]["reasons"])
 
         repaired_finding = finding(disposition="repaired")
@@ -592,7 +595,9 @@ class RootWorkflowTests(unittest.TestCase):
         repaired["design_review"]["independent_review"]["findings"] = [
             repaired_finding
         ]
-        repaired_result = evaluate_root_workflow(repaired)
+        repaired_result = evaluate_root_workflow(
+            repaired, review_checkpoint=review_checkpoint
+        )
         self.assertEqual(repaired_result["review_gate"]["status"], "pass")
         self.assertTrue(repaired_result["execution_permission"]["root_mutation"])
 
@@ -602,21 +607,27 @@ class RootWorkflowTests(unittest.TestCase):
         ] = "sha256:design-7"
         self.assertIn(
             "self_check_digest_mismatch",
-            evaluate_root_workflow(stale_self_check)["review_gate"]["reasons"],
+            evaluate_root_workflow(
+                stale_self_check, review_checkpoint=review_checkpoint
+            )["review_gate"]["reasons"],
         )
 
         missing_previous_review = copy.deepcopy(repaired)
         del missing_previous_review["design_review"]["previous_review"]
         self.assertIn(
             "missing_previous_review",
-            evaluate_root_workflow(missing_previous_review)["review_gate"]["reasons"],
+            evaluate_root_workflow(
+                missing_previous_review, review_checkpoint=review_checkpoint
+            )["review_gate"]["reasons"],
         )
 
         unchanged_revision = copy.deepcopy(repaired)
         unchanged_revision["design_review"]["previous_review"]["design_revision"] = 8
         self.assertIn(
             "repair_did_not_create_new_revision",
-            evaluate_root_workflow(unchanged_revision)["review_gate"]["reasons"],
+            evaluate_root_workflow(
+                unchanged_revision, review_checkpoint=review_checkpoint
+            )["review_gate"]["reasons"],
         )
 
         substituted_finding = copy.deepcopy(repaired)
@@ -628,7 +639,9 @@ class RootWorkflowTests(unittest.TestCase):
         ]
         self.assertIn(
             "missing_prior_finding",
-            evaluate_root_workflow(substituted_finding)["review_gate"]["reasons"],
+            evaluate_root_workflow(
+                substituted_finding, review_checkpoint=review_checkpoint
+            )["review_gate"]["reasons"],
         )
 
         altered_finding = copy.deepcopy(repaired)
@@ -637,7 +650,9 @@ class RootWorkflowTests(unittest.TestCase):
         ] = "different-criterion"
         self.assertIn(
             "altered_prior_finding",
-            evaluate_root_workflow(altered_finding)["review_gate"]["reasons"],
+            evaluate_root_workflow(
+                altered_finding, review_checkpoint=review_checkpoint
+            )["review_gate"]["reasons"],
         )
 
         human_deviation = copy.deepcopy(repaired)
@@ -655,7 +670,10 @@ class RootWorkflowTests(unittest.TestCase):
             "decision_receipt": "decision:D-1",
         }
         self.assertEqual(
-            evaluate_root_workflow(human_deviation)["review_gate"]["status"], "pass"
+            evaluate_root_workflow(
+                human_deviation, review_checkpoint=review_checkpoint
+            )["review_gate"]["status"],
+            "pass",
         )
 
         second_repair = copy.deepcopy(repaired)
@@ -667,7 +685,9 @@ class RootWorkflowTests(unittest.TestCase):
         )
         self.assertIn(
             "repair_limit_exceeded",
-            evaluate_root_workflow(second_repair)["review_gate"]["reasons"],
+            evaluate_root_workflow(
+                second_repair, review_checkpoint=review_checkpoint
+            )["review_gate"]["reasons"],
         )
 
         blocked = metadata()
@@ -679,6 +699,41 @@ class RootWorkflowTests(unittest.TestCase):
         self.assertEqual(
             blocked_result["workflow_state"], {"state": "blocked", "final": True}
         )
+
+    def test_root_checkpoint_prevents_repair_count_reset_on_new_revision(self):
+        first_revision = metadata()
+        first_revision["design_review"]["independent_review"]["verdict"] = "repair"
+        first_revision["design_review"]["independent_review"]["findings"] = [finding()]
+        first_result = evaluate_root_workflow(first_revision)
+        self.assertEqual(first_result["review_gate"]["status"], "repair_required")
+        self.assertTrue(first_result["review_checkpoint"]["automatic_repair_used"])
+
+        next_revision = metadata()
+        next_revision["revision"] = 8
+        next_revision["authority_preflight"]["revision"] = 8
+        next_revision["design_digest"] = "sha256:design-8"
+        next_revision["design_review"] = review(
+            design_digest="sha256:design-8",
+            verdict="repair",
+            repair_count=0,
+        )
+        next_revision["design_review"]["design_revision"] = 8
+        next_revision["design_review"]["independent_review"]["identity"] = "review-8"
+        next_finding = finding()
+        next_finding["identity"] = "F-2"
+        next_revision["design_review"]["independent_review"]["findings"] = [
+            next_finding
+        ]
+
+        reset_result = evaluate_root_workflow(
+            next_revision,
+            review_checkpoint=first_result["review_checkpoint"],
+        )
+        self.assertEqual(reset_result["review_gate"]["status"], "block")
+        self.assertIn(
+            "repair_limit_exceeded", reset_result["review_gate"]["reasons"]
+        )
+        self.assertFalse(reset_result["execution_permission"]["root_mutation"])
 
 if __name__ == "__main__":
     unittest.main()
