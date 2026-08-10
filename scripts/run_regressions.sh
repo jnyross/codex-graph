@@ -3,6 +3,7 @@
 set -eu
 
 python3 skills/codex-graph/scripts/validate_skill.py
+python3 -m unittest skills/codex-graph/scripts/test_validate_skill.py
 python3 skills/codex-graph/scripts/graph_coherence.py --selfcheck
 node --test skills/codex-graph/scripts/task_collection_harness.test.js
 node --test skills/codex-graph/testcases/harness/testcases.test.js
