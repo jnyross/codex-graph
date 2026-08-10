@@ -11,7 +11,9 @@ rules.
 - **Interactive workflow** — a workflow with a reachable human decision loop.
 - **Durable mutation** — an action that changes user, repository, service, or other persistent state outside an isolated worker draft.
 - **Authority preflight** — the root-owned record that classifies interactivity, mutation authority, worker confinement, generic triggers, selected topology, and whether generation may continue.
-- **Worker confinement** — positive evidence of one worker's environment, read scope, write scope, isolation, and available capabilities.
+- **Worker confinement** — positive evidence of one worker's environment, read
+  scope, write scope, isolation, and available capabilities. It includes proof
+  that no available capability can perform a durable mutation.
 - **Protected domain** — one of the closed consequence-bearing categories in the protected-domain gate.
 - **Decision frontier** — the complete revisioned set of independently answerable human questions that are currently unblocked by other questions.
 - **Decision receipt** — the durable normalization of accepted answers for one workflow, plan revision, and queue revision.
@@ -30,7 +32,9 @@ The root records the authority preflight before generic complexity selection or 
 - the authority-bearing verdict and its evidence;
 - every reachable decision-loop path;
 - every reachable mutation identity and its root owner;
-- each worker's semantic role, environment, read scope, write scope, capabilities, and isolation proof;
+- each worker's semantic role, environment, read scope, write scope,
+  capabilities, isolation proof, and positive proof that its capabilities
+  cannot perform a durable mutation;
 - the generic trigger state and selected topology; and
 - `allow_generation`, `block`, or runtime-replan state.
 
@@ -38,12 +42,19 @@ Classify safety before complexity. A reachable human decision loop makes L1–L4
 
 Every durable mutation stays root-owned. Prior authorization, reversibility, narrow scope, or a single worker does not transfer authority. Workers may read and create isolated drafts only within proved scopes. A worker that discovers a required durable mutation stops before action and returns sanitized evidence to the root.
 
-Delegation requires positive worker-confinement proof and proof that durable actions remain root-owned. Missing, malformed, ambiguous, stale, or contradicted preflight or confinement evidence selects L0 and blocks. Confidence, convention, or absence of an observed violation is not proof.
+Delegation requires positive proof for each worker that its available
+capabilities cannot perform a durable mutation. Instructions, policy,
+confidence, convention, and absence of an observed violation are not proof.
+Durable actions must also remain root-owned. Missing, malformed, ambiguous,
+stale, or contradicted preflight or confinement evidence selects L0 and blocks.
 
 Runtime discovery invalidates the current preflight:
 
 - If a human decision loop becomes reachable, delegated work stops. Preserve valid evidence and observed effects, then create a new L0 revision before work continues.
-- If a worker discovers a required durable mutation, it stops before action. The root owns the mutation. L1+ can continue only after confinement is proved again; otherwise select L0 and block.
+- If a worker discovers a required durable mutation, it stops before action.
+  The root owns the mutation. L1+ can continue only after a new preflight proves
+  that every delegated worker's current capabilities cannot perform durable
+  mutation. Otherwise select L0 and block.
 
 ## Protected-domain mutation gate
 

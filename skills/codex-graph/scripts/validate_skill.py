@@ -72,6 +72,10 @@ REQUIRED_REFERENCES = {
     "references/self-testing.md",
     *REQUIRED_OWNER_HEADINGS,
 }
+FENCED_BLOCK = re.compile(
+    r"(?ms)^[ \t]*```[^\n]*\n.*?^[ \t]*```[ \t]*$"
+)
+MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 
 
 def fail(message: str) -> None:
@@ -153,8 +157,37 @@ def read_openai_interface(text: str) -> dict[str, str]:
     return result
 
 
+def strip_fenced_blocks(text: str) -> str:
+    return FENCED_BLOCK.sub("", text)
+
+
+def normalize_link_destination(raw_target: str) -> str:
+    target = raw_target.strip()
+    if target.startswith("<") and target.endswith(">"):
+        target = target[1:-1].strip()
+    return target
+
+
+def markdown_link_destinations(text: str) -> list[str]:
+    return [
+        normalize_link_destination(raw_target)
+        for raw_target in MARKDOWN_LINK.findall(strip_fenced_blocks(text))
+    ]
+
+
+def require_skill_owner_links(body: str) -> None:
+    linked_paths = {
+        unquote(target.split("#", 1)[0])
+        for target in markdown_link_destinations(body)
+        if target and not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target)
+    }
+    for owner_path in REQUIRED_OWNER_HEADINGS:
+        if owner_path not in linked_paths:
+            fail(f"SKILL.md does not link to required owner: {owner_path}")
+
+
 def require_headings(path: Path, headings: list[str]) -> None:
-    present = set(path.read_text(encoding="utf-8").splitlines())
+    present = set(strip_fenced_blocks(path.read_text(encoding="utf-8")).splitlines())
     for heading in headings:
         if heading not in present:
             fail(f"{path.name} is missing required heading: {heading}")
@@ -180,22 +213,15 @@ def validate_machine_data(root: Path, markdown_files: list[Path]) -> None:
 
 
 def validate_relative_links(root: Path, markdown_files: list[Path]) -> None:
-    link_pattern = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
     for path in markdown_files:
-        text = re.sub(
-            r"(?ms)^[ \t]*```[^\n]*\n.*?^[ \t]*```[ \t]*$",
-            "",
-            path.read_text(encoding="utf-8"),
-        )
-        for raw_target in link_pattern.findall(text):
-            target = raw_target.strip()
+        for target in markdown_link_destinations(path.read_text(encoding="utf-8")):
+            raw_target = target
             if (
                 not target
-                or target.startswith(("#", "/", "http://", "https://", "mailto:"))
+                or target.startswith(("#", "/"))
+                or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target)
             ):
                 continue
-            if target.startswith("<") and target.endswith(">"):
-                target = target[1:-1]
             target = unquote(target.split("#", 1)[0])
             resolved = (path.parent / target).resolve()
             try:
@@ -254,14 +280,16 @@ def validate(root: Path) -> None:
     if text.count(EXACT_SENTENCE) != 1:
         fail("the exact required execution sentence must occur once in SKILL.md")
 
+    structural_body = strip_fenced_blocks(body)
     positions = []
     for heading in REQUIRED_OUTPUT_HEADINGS:
-        position = body.find(f"`{heading}`")
+        position = structural_body.find(f"`{heading}`")
         if position < 0:
             fail(f"missing output-contract heading: {heading}")
         positions.append(position)
     if positions != sorted(positions):
         fail("output-contract headings are not listed in the required order")
+    require_skill_owner_links(structural_body)
 
     for relative_path, headings in REQUIRED_OWNER_HEADINGS.items():
         require_headings(root / relative_path, headings)

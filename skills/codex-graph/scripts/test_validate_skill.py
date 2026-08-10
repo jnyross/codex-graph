@@ -21,14 +21,49 @@ def append_to_skill(root: Path, text: str) -> None:
     path = root / "SKILL.md"
     path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
 
+def replace_skill_link(root: Path, target: str) -> None:
+    path = root / "SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace(f"({target})", f"(https://example.com/{Path(target).stem})"),
+        encoding="utf-8",
+    )
+
+
+def move_heading_into_fence(root: Path, relative_path: str, heading: str) -> None:
+    path = root / relative_path
+    text = path.read_text(encoding="utf-8").replace(heading, heading.removeprefix("## "), 1)
+    path.write_text(
+        text + f"\n```markdown\n{heading}\n```\n",
+        encoding="utf-8",
+    )
+
 
 class SkillBundleAcceptanceTests(unittest.TestCase):
     def test_real_bundle_and_structural_negative_controls(self):
         self.assertEqual(run_validator(BUNDLE).returncode, 0)
 
+        with self.subTest(name="angle-bracketed HTTPS"), tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "codex-graph"
+            shutil.copytree(BUNDLE, root)
+            append_to_skill(root, "\n[Official](<https://example.com/docs>)\n")
+            result = run_validator(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
         cases = {
             "missing owner": lambda root: (root / "references" / "authority-and-decisions.md").unlink(missing_ok=True),
             "missing heading": lambda root: (root / "references" / "authority-and-decisions.md").write_text("# Authority and Decisions\n"),
+            "missing authority owner link": lambda root: replace_skill_link(
+                root, "references/authority-and-decisions.md"
+            ),
+            "missing evidence owner link": lambda root: replace_skill_link(
+                root, "references/evidence-and-acceptance.md"
+            ),
+            "required heading only in fence": lambda root: move_heading_into_fence(
+                root,
+                "references/authority-and-decisions.md",
+                "## Protected-domain mutation gate",
+            ),
             "broken relative link": lambda root: append_to_skill(
                 root, "\n[missing](references/missing.md)\n"
             ),

@@ -531,9 +531,9 @@ attempts follow the non-replay rules in
 
 Build terminal data through normal return values. Use one `terminalEmitted` guard and one final `text(...)` call. Do not call `exit()` inside the main `try` block. In some orchestration layouts, the exit signal can enter `catch` and produce a second terminal object.
 
-Keep attempt-level terminal states explicit:
+Keep task-result status values explicit:
 
-- `complete`: the task or collection contract is satisfied;
+- `passed`: the task or collection contract is satisfied;
 - `blocked`: the task cannot safely progress; and
 - `failed`: the task contract is authoritatively contradicted or its bounded
   repair does not pass.
