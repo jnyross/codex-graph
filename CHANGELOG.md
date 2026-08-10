@@ -2,9 +2,11 @@
 
 All notable product releases are documented here.
 
-## Unreleased
+## [0.5.8] - 2026-08-10
 
 - feat: replace all six lexical testcase bundles with explicit canonical-goal bindings, normalized structural contracts, one resolver and role-normalized offline conformance verdict (#42)
+
+- WF-02: replace lexical testcases with structural conformance (#51)
 
 ## [0.5.7] - 2026-08-10
 
