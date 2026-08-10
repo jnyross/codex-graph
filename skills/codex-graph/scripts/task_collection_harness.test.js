@@ -287,8 +287,7 @@ test("unwraps resolveTool envelopes from wait and read", async () => {
 
 
 // ── Dynamic-workflow pattern fixtures ───────────────────────────────────────
-// Shapes derived from real Grok/Claude orchestration patterns; see
-// docs/dynamic-workflow-testcase-catalog.md and testcases/.
+// Shapes derived from the same orchestration patterns as testcases/.
 
 test("atomic screen fan-out: verdicts terminal at first read need no waits (#13)", async () => {
   // Grok screen phase: one atomic screener per candidate; workers finish fast
@@ -927,19 +926,25 @@ test("forensic floor truncates the raw read to the named cap", async () => {
   assert.match(result.lastReadResult, /truncated \d+ chars/);
 });
 
-test("skill docs bound the turn window and carry the clipped-window anchor", () => {
+test("task lifecycle owner bounds reads and consumers link to it", () => {
   const root = path.join(__dirname, "..");
-  const anchor = "a clipped window is not proof of absence";
-  const surfaces = [
-    path.join(root, "SKILL.md"),
-    path.join(root, "references", "task-lifecycle.md"),
-    path.join(root, "references", "code-mode-script-patterns.md"),
-  ];
-  for (const file of surfaces) {
-    const text = fs.readFileSync(file, "utf8");
+  const owner = path.join(root, "references", "task-lifecycle.md");
+  const ownerText = fs.readFileSync(owner, "utf8");
+  assert.ok(
+    ownerText.includes("a clipped window is not proof of absence"),
+    "task-lifecycle.md is missing the clipped-window rule",
+  );
+
+  for (const [file, link] of [
+    [path.join(root, "SKILL.md"), "(references/task-lifecycle.md)"],
+    [
+      path.join(root, "references", "code-mode-script-patterns.md"),
+      "(task-lifecycle.md)",
+    ],
+  ]) {
     assert.ok(
-      text.includes(anchor),
-      `${path.basename(file)} is missing the anchor phrase`,
+      fs.readFileSync(file, "utf8").includes(link),
+      `${path.basename(file)} does not link to the task lifecycle owner`,
     );
   }
   // No sample anywhere in the skill bundle may request more than 10 turns.

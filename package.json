@@ -1,0 +1,7 @@
+{
+  "name": "codex-graph",
+  "private": true,
+  "dependencies": {
+    "acorn": "8.15.0"
+  }
+}

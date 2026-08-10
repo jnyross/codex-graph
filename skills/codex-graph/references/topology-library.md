@@ -2,9 +2,26 @@
 
 Use these patterns as starting points for Part 1 and as the execution skeleton for Part 2. Rename every node, tailor every contract, and preserve the same node IDs in the JavaScript `WORKFLOW` metadata. Do not force parallelism onto a trivial task.
 
-Select the lowest progressive-complexity tier whose trigger is already proven.
-The small-change pattern is the explicit L0 baseline. Each pattern notes which
+Select topology only after the
+[authority preflight](authority-and-decisions.md), then select the lowest
+progressive-complexity tier whose generic trigger is already proven. The
+small-change pattern is the generic L0 baseline. Each pattern notes which
 stages are escalation-gated rather than baseline.
+
+## Role and node kinds
+
+A **semantic role** is a stable contract responsibility such as discovery,
+integration, validation, repair, or terminal reporting. A **graph-local node
+identity** is the unique ID assigned to one role instance in one generated
+artifact set. Roles carry meaning across graphs; node identities do not.
+
+| Node kind | Contract purpose |
+|---|---|
+| work | Produce one scoped handoff or artifact |
+| join | Combine declared upstream results without adding authority |
+| gate | Decide one declared branch from machine-readable evidence |
+| repair | Apply the one bounded correction path |
+| terminal | End one graph path with its scoped result |
 
 ## Artifact boundary
 
@@ -202,6 +219,8 @@ For a mixed goal, add a short decomposition stage that produces a finite list of
 - Add a performance branch only when the goal has a measurable performance requirement.
 - Do not split tightly coupled implementation merely to create visual parallelism.
 - Prefer a fresh validator that receives acceptance criteria, the diff or artifact, and raw evidence rather than the implementer's narrative alone.
-- Keep terminal states explicit: passed, blocked, failed, or unresolved with evidence.
+- For final workflow states and outcomes, use
+  [Authority and Decisions](authority-and-decisions.md). Keep every
+  lower-level status scoped to its own interface.
 - Keep graph labels readable; put detailed prompts and handoff schemas in node contracts and the JavaScript, not inside Mermaid boxes.
 - When a graph node is represented by a gate rather than a worker, encode it as an explicit function or conditional in the script and list it in `WORKFLOW.nodes`.

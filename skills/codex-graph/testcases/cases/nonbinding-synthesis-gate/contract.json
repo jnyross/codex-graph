@@ -1,0 +1,78 @@
+{
+  "case_id": "nonbinding-synthesis-gate",
+  "schema_version": "1",
+  "canonical_goal_digest": "20d6fb6c84a40b9967663e87a0d8fc5bd6ebe8194557f980e0030fb1c9ba5463",
+  "role_instances": [
+    { "role": "contract_owner", "kind": "contract" },
+    { "role": "collector_outdoor", "kind": "discovery" },
+    { "role": "collector_culture", "kind": "discovery" },
+    { "role": "collector_markets", "kind": "discovery" },
+    { "role": "synthesizer", "kind": "integration" },
+    { "role": "audit_provenance", "kind": "validator" },
+    { "role": "audit_coverage", "kind": "validator" },
+    { "role": "acceptance_gate", "kind": "gate" },
+    { "role": "repair", "kind": "repair" },
+    { "role": "revalidator", "kind": "validator" },
+    { "role": "accepted_terminal", "kind": "terminal" },
+    { "role": "failed_terminal", "kind": "terminal" }
+  ],
+  "topology": [
+    { "from": "contract_owner", "to": "collector_outdoor" },
+    { "from": "contract_owner", "to": "collector_culture" },
+    { "from": "contract_owner", "to": "collector_markets" },
+    { "from": "collector_outdoor", "to": "synthesizer" },
+    { "from": "collector_culture", "to": "synthesizer" },
+    { "from": "collector_markets", "to": "synthesizer" },
+    { "from": "synthesizer", "to": "audit_provenance" },
+    { "from": "synthesizer", "to": "audit_coverage" },
+    { "from": "audit_provenance", "to": "acceptance_gate" },
+    { "from": "audit_coverage", "to": "acceptance_gate" },
+    { "from": "acceptance_gate", "to": "accepted_terminal", "outcome": "pass" },
+    { "from": "acceptance_gate", "to": "repair", "outcome": "repair" },
+    { "from": "repair", "to": "revalidator" },
+    { "from": "revalidator", "to": "accepted_terminal", "outcome": "pass" },
+    { "from": "revalidator", "to": "failed_terminal", "outcome": "fail" }
+  ],
+  "environments": {
+    "contract_owner": "local",
+    "collector_outdoor": "local",
+    "collector_culture": "local",
+    "collector_markets": "local",
+    "synthesizer": "local",
+    "audit_provenance": "local",
+    "audit_coverage": "local",
+    "acceptance_gate": "local",
+    "repair": "local",
+    "revalidator": "local",
+    "accepted_terminal": "local",
+    "failed_terminal": "local"
+  },
+  "concurrency": [
+    ["collector_outdoor", "collector_culture", "collector_markets"],
+    ["audit_provenance", "audit_coverage"]
+  ],
+  "gates": [
+    { "role": "acceptance_gate", "outcomes": ["pass", "repair"] }
+  ],
+  "repair_edges": [
+    { "from": "acceptance_gate", "to": "repair" },
+    { "from": "repair", "to": "revalidator" }
+  ],
+  "terminal_paths": [
+    { "from": "acceptance_gate", "to": "accepted_terminal", "outcome": "pass" },
+    { "from": "revalidator", "to": "accepted_terminal", "outcome": "pass" },
+    { "from": "revalidator", "to": "failed_terminal", "outcome": "fail" }
+  ],
+  "collection": {
+    "read_first": true,
+    "read_after_wait": true,
+    "max_output_chars_per_item": 20000
+  },
+  "assertions": [
+    { "id": "literal:synthesis-obligation", "operator": "includes_exact_text", "roles": ["synthesizer"], "field": "prompt", "value": "only obligation" },
+    { "id": "literal:synthesis-non-binding", "operator": "includes_exact_text", "roles": ["synthesizer"], "field": "prompt", "value": "non-binding" },
+    { "id": "literal:synthesis-does-not-own-audits", "operator": "excludes_exact_text", "roles": ["synthesizer"], "field": "prompt", "value": "must pass all audit lanes" },
+    { "id": "literal:synthesis-does-not-wait-for-audits", "operator": "excludes_exact_text", "roles": ["synthesizer"], "field": "prompt", "value": "wait for the audit results before returning" },
+    { "id": "literal:synthesis-does-not-complete-workflow", "operator": "excludes_exact_text", "roles": ["synthesizer"], "field": "prompt", "value": "declare the overall workflow complete" }
+  ]
+}

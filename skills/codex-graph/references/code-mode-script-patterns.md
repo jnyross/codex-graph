@@ -1,6 +1,11 @@
 # Code Mode script patterns
 
-Use this reference to turn the approved graph design into complete Codex Code Mode JavaScript. Tailor the script to the goal; do not copy the skeleton unchanged.
+Use this reference for generic Code Mode JavaScript after the graph design and
+activated contracts are approved. Authority-bearing execution also requires
+[Authority and Decisions](authority-and-decisions.md); mutation evidence and
+acceptance require
+[Evidence and Acceptance](evidence-and-acceptance.md). Tailor the script to the
+goal; do not copy the skeleton unchanged.
 
 ## Runtime facts to design around
 
@@ -90,28 +95,21 @@ Do not rely on this helper alone when the current declaration already provides a
 
 ## Normalize tool results at the call boundary
 
-A resolved tool can return its entire payload as a JSON **string** at the
-JavaScript level, not an object (observed for `codex_app__create_thread` on
-ChatGPT Desktop for macOS: `typeof result === "string"`). Any key lookup
-applied to the raw return silently fails, which can wrongly mark every
-successful start as failed.
+A resolved tool can return its complete payload as a JSON string. Any key lookup
+on that raw string fails silently.
 
-`resolveTool` above already returns `{ value, raw }` from every `call`. Use
-the parsed value for key lookup and keep the raw payload with the handle —
-no shared mutable state:
+`resolveTool` returns `{ value, raw }` from each `call`. Use the parsed value
+for key lookup. Keep the raw value with the boundary result when an activated
+contract requires it:
 
 ```javascript
-// at a start site (createThread came from resolveTool):
-const start = await createThread.call(startArgs);
-handle.start_result = start.raw;
-const threadId = findString(start.value, ["threadId", "thread_id"]);
+const result = await operation.call(args);
+const resultId = findString(result.value, ["resultId", "result_id"]);
 ```
 
-Parse the whole trimmed string exactly once. Do not apply fragment heuristics
-(fenced-block or `{...}` extraction) to a tool return: those heuristics exist
-for model prose inside structured `items`, and on a tool payload they can
-silently discard parts of a multi-object response. Store the raw return in the
-handle's `start_result` so blocked evidence keeps the unmodified payload.
+Parse the complete trimmed string once. Do not apply fenced-block or object
+fragment extraction to a tool return. Those heuristics can discard parts of a
+multi-object response.
 
 ## Build arguments from the exposed declaration
 
@@ -134,176 +132,58 @@ Do not add `agent_type`, model, or reasoning overrides unless the goal requires 
 
 ## Bounded parallel fan-out
 
-Use `Promise.allSettled` when partial diagnostics are useful, but treat any required worker failure as a blocked stage. Create each node's handle **before** the tool call and rethrow with that handle attached so aggregate failures can report live work:
+Use `Promise.allSettled` when partial diagnostics are useful. Inspect every
+result and block the scoped stage when a required call fails. Use
+`Promise.all` only when one rejection must stop the batch and no partial result
+is useful.
 
-```javascript
-async function startRequiredNode(node, spawnTool, projectId) {
-  const handle = {
-    node_id: node.id,
-    project_id: projectId,
-    environment: node.environment,
-    run_tag: node.runTag,
-    title: node.title,
-    state: "pending_setup",
-  };
-  try {
-    const start = await spawnTool.call(spawnArgs(spawnTool, node));
-    handle.start_result = start.raw;
-    handle.thread_id = findString(start.value, ["threadId", "thread_id"]);
-    handle.client_thread_id = findString(start.value, [
-      "clientThreadId",
-      "client_thread_id",
-    ]);
-    handle.host_id = findString(start.value, ["hostId", "host_id"]);
-    handle.state = handle.thread_id ? "active" : "pending_setup";
-    return { node, handle, start };
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    throw Object.assign(err, { handle });
-  }
-}
+When an active tool or observed workload requires a cap, run independent sets
+in explicit stages. Join them under one owner. Do not create a worker that
+spawns another worker.
 
-async function spawnRequiredBatch(nodes, spawnTool, projectId) {
-  const settled = await Promise.allSettled(
-    nodes.map((node) => startRequiredNode(node, spawnTool, projectId)),
-  );
+## Route visible task lifecycles
 
-  const failures = settled
-    .map((result, index) => ({ result, node: nodes[index] }))
-    .filter(({ result }) => result.status === "rejected");
-
-  if (failures.length > 0) {
-    throw Object.assign(
-      new Error(`Required workers failed to spawn: ${failures.map(({ node }) => node.id).join(", ")}`),
-      { handles: failures.map(({ result }) => result.reason?.handle).filter(Boolean) },
-    );
-  }
-
-  return settled.map(({ value }) => ({
-    node: value.node,
-    handle: value.handle,
-    spawnResult: value.start.raw,
-    agentId: findAgentId(value.start.value),
-  }));
-}
-```
-
-When the active tool or observed workload requires a fan-out cap, run larger
-independent sets in explicit sequential stages and join them under one owner.
-Do not create a worker that spawns another worker.
-
-## Bind visible tasks to the correct project
-
-When the script creates visible Codex tasks, read `task-lifecycle.md` and use its complete contract. Resolve the exact saved project before task creation. Choose the task environment **per node**:
-
-- Read-only nodes (research, discovery, audit) →
-  `environment: { type: "local" }`.
-- Nodes that write repository files →
-  `environment: { type: "worktree" }` with disjoint write scopes.
-- `worktree` REQUIRES `isGitRepository === true` from the project lookup.
-  On a non-git project root, worktree init fails silently (openai/codex#28204:
-  no thread row is written and the pending id is never listed). With a single
-  repository writer, degrade that write to the root orchestrator on the real
-  checkout; otherwise fail fast with a named `unresolved_risk`.
-- Never apply `worktree` to every node because one writer exists in the graph
-  (Lisbon dogfood v4: global worktree on research workers left all three in
-  `pending_setup` with unresolved `clientThreadId`).
-- Write final user-facing project-root artifacts from the root orchestrator
-  (or a single integration owner on the real project), not only inside a
-  disposable worker worktree.
-
-Use a projectless target only when no saved project applies or the user explicitly requests it.
-
-## Preserve setup handles and terminal handoffs
-
-A task-creation result can contain a ready `threadId` or only a pending `clientThreadId`. Both are successful setup states. Retain the complete result and resolve pending setup with bounded polling before calling wait or read tools. Match the unique run tag in its bracketed exact form `[<runTag>]` against the explicit key list `name`/`title`/`summary`/`preview` (open-source rows carry `name`/`preview`, not `title`/`summary`). Require the per-node unique form — the bracketed tag plus the node id in the same field — so concurrent pending workers never cross-bind; prefer `name`/`title` over `preview`; never adopt the orchestrator's own thread row as a worker handle; and exclude every already claimed thread id from later resolutions. Prefer exact project ID when present on the list row, but do not require it during early setup loading. Correlate by `clientThreadId` when the list exposes it. Use a chat-scale bound for local starts and a longer provisioning-scale bound for worktree starts. Retain `hostId` when present. See `task-lifecycle.md` for the state machine and code pattern.
-
-Do not reduce a task handle to one convenience ID while setup or execution is live. A blocked terminal report must include each node ID, ready or pending ID, project ID, host ID, title, state, and the exact start or collection error.
-
-When several required starts are aggregated into one error, attach each
-rejected node's handle to the aggregate error
-(`Object.assign(new Error(...), { handles })`) and spread `error.handles` into
-the blocked result's live-handle list. A start rejection whose task was already
-created is still a live handle; dropping it orphans a running task and makes
-the blocked report unrecoverable.
-
-## Read structured task output
-
-Task reads return structured turns and `items`; they are not guaranteed to expose one flat text field. Recursively inspect the structured result and validate the required JSON handoff against the node ID and schema. Request the tool's supported output size rather than assuming a universal item limit.
-
-Task reads return a bounded window of the newest turns first (LAST-N; the
-open-source `thread/turns/list` handler sorts newest-first by default and
-truncates to the requested limit). The latest handoff is on the first page of
-a fresh read. Omit `turnLimit` from read calls or keep it at or below 10 —
-ChatGPT Desktop rejects larger values (openai/codex#30058), and the rejection
-arrives as a bare string tool result, not a thrown error. Page with the
-returned cursor only when older history is needed. Reads may return a clipped
-or windowed view; a clipped window is not proof of absence — a short or
-clipped window means keep polling within budget, never conclude absence.
-
-Shape-check every read and wait result before use. A top-level string result,
-or an `error`/`isError` indicator or message-only body with no
-`turns`/`items`/`terminal` payload, is a
-tool error, not an empty snapshot; a result carrying real payload is a
-snapshot even when a non-fatal error field rides along. Allow at most 3
-consecutive tool errors per handle, then abort
-that handle's collection with a named blocker embedding the verbatim error
-string; never spin a collection window on errored reads. A collection abort or
-window expiry must embed the last raw read result, truncated to a named cap,
-in the blocked terminal for that handle. The normative contract and code
-sample live in `task-lifecycle.md` under "Collection read bounds and error
-envelopes".
-
-A wait timeout is not by itself a task failure. Use the active tool's wait semantics; if it can return immediately or run indefinitely, add a named deadline and polling strategy based on the observed behavior.
-
-Accept explicit checkpoints and resume handles for long graphs. Validate active handles by node ID, project ID, host ID, model policy, and ready task ID, then collect the existing task. Reuse compact handoffs for completed nodes. Create `not_started` nodes normally after their dependencies pass; do not require a handle for a future stage. A resume path must not duplicate completed or active work.
-
-When an observed collection limit or active-tool deadline stops a task while it
-is still active, return a resumable checkpoint. Preserve completed handoffs,
-active handles, not-started node IDs, and the exact stop condition used. Do not
-repeat completed research in the next run.
+When a script creates visible Codex tasks or threads, implement the complete
+[Codex task lifecycle](task-lifecycle.md). That module owns project binding,
+per-node environments, setup identity, collection, read bounds, resumable
+handles, and attempt-level reporting. This generic script module does not
+restate those rules.
 
 ## Handoffs and joins
 
-Require each worker to return one complete JSON object. Do not impose a character budget unless the active tool declares one or a run demonstrates that one is needed. Keep decisive evidence in the handoff; use an approved durable artifact when the evidence is too large for the actual transport.
+Require each worker to return one complete JSON object. Treat it as a routing
+index, not the authoritative evidence store. Preserve full evidence in an
+approved durable artifact when it exceeds the active transport. Return the
+artifact path or identifier and hash.
 
-The compact JSON is a routing index, not the authoritative evidence store. For evidence-heavy work, give each record a stable ID and preserve complete URLs, source roles, dates, locators, and extracts in the durable artifact. Return the artifact identifier and hash with the compact record index. Do not compress required evidence into unexplained aliases such as `S1`.
+Build joins from compact manifests or artifact references. Use staged fan-in
+only when an observed transport limit requires it. Preserve stable record and
+artifact identities. Never slice serialized JSON.
 
-```javascript
-function boundedJson(value, maxChars) {
-  const rendered = JSON.stringify(value, null, 2);
-  if (maxChars !== undefined && rendered.length > maxChars) {
-    throw new Error(`Complete handoff exceeds ${maxChars} characters`);
-  }
-  return rendered;
-}
-```
+Validate each handoff against one canonical graph-local record shape. Declare
+equivalent forms and deterministic adapters before execution. Run adapters
+before cardinality and field checks. Reject missing, duplicate, unknown, or
+ambiguous references.
 
-If a measured transport limit appears, declare it in the workflow contract and apply it to the smallest affected boundary. `boundedJson(workerHandoff, observedLimit)` may validate one worker result, but do not apply that limit to an aggregate join unless the tool explicitly imposes it.
+A repair worker can use a compact form only when the repair owner normalizes it
+before revalidation and formatting. Final formatting rejects missing required
+fields instead of guessing a shape or emitting `null`. These adapters do not
+define transport completeness or an evidence family. Those rules belong to
+[Evidence and Acceptance](evidence-and-acceptance.md).
 
-Build joins from references rather than embedding every handoff:
+## Freeze one graph-local work contract
 
-```javascript
-function joinManifest(handoffs) {
-  return handoffs.map(({ nodeId, status, recordIds, artifact }) => ({
-    nodeId,
-    status,
-    recordIds,
-    artifactId: artifact?.id,
-    artifactHash: artifact?.hash,
-  }));
-}
-```
+Before workers start, declare the fixed work scope, selection rule, record
+fields, validation criteria, and repair boundary. Give the same **contract ID**
+and shared field definitions to the stages that consume them. Reject a
+validator result that invents a new cutoff or expands the fixed scope. Do not
+paste publication or root-gate obligations into mid-graph worker prompts; those
+stay with the stages that own them.
 
-If an aggregate join exceeds an observed transport limit, create staged validation fan-in: compact manifest entries or artifact references, then bounded shards only where needed, followed by one serial root gate. Preserve exact node and artifact handles. Never slice serialized JSON.
+For authority-bearing execution, this work contract does not replace the
+authority, decision, transport-proof, target-chain, or manifest contracts in
+the two reliability owners. Link those owners from the responsible root stages.
 
-## Freeze one acceptance and schema contract
-
-Before workers start, declare the fixed scope or pilot size, selection rule, required record fields, audit thresholds, publication rule, and repair boundary. Give the same **contract ID** and shared field definitions to discovery, integration, every audit lens, the root gate, repair, revalidation, and final formatting. Reject an audit result that invents a new cutoff or expands the fixed pilot. Do **not** paste publication rules, multi-lane audit requirements, or root-gate semantics into mid-graph worker prompts — those obligations stay with the nodes that own them (see "Worker prompt contract").
-
-Define one canonical record schema and validate it at every boundary. A repair worker can use a compact transport form only when the repair owner deterministically normalizes it back to the canonical schema before revalidation and formatting. Never let the formatter guess between object and array shapes or silently emit `null` fields.
-
-Declare any accepted equivalent transport forms and their adapters before execution. For example, a shard can be either a two-record array or an object with exactly two `record_ids` that resolve uniquely against the canonical record table. Normalize first, then enforce cardinality and required fields. Reject undeclared or ambiguous shapes; do not reject a complete declared shape before its adapter runs.
 
 ## Machine-readable validation gate
 
@@ -387,7 +267,10 @@ criterion.
 
 Do not use a retry loop. Keep the branch visible.
 
-Select repair targets from the validator verdict's `affected_ids` mapped to node IDs; never derive them from a criterion-prefix pattern. The repair boundary of affected existing workers means exactly those nodes. Require the repair prompt to demand an explicit post-repair marker in the corrected handoff (for example a `corrected_at` timestamp) and filter recollection on that marker; add cursor or turn-id provenance when the read tool provides it. Never correlate by array index into a returned turn list. A stale pre-repair handoff is not a corrected handoff. Reads may return a clipped window, and a clipped window is not proof of absence — a handoff not yet visible means keep polling within budget under the collection read-bounds contract. Observed: Lisbon dogfood v5 — a criterion-prefix pattern matched every failed criterion, so the affected set degenerated to all workers while the verdict's `affected_ids` went unused.
+Select repair targets from the validator verdict's `affected_ids` mapped to node
+IDs. Never derive them from a criterion-prefix pattern. When repair uses visible
+tasks, follow the corrected-handoff and collection rules in
+[Codex task lifecycle](task-lifecycle.md).
 
 If L4 is active and many records need corrections, keep one logical repair
 branch but split its internal work into bounded record-specific correction
@@ -487,9 +370,16 @@ Root/gate/formatter: own publication and terminal write.
 
 For a sole writer, add instructions to preserve uncommitted work, inspect applicable `AGENTS.md`, keep the diff small, and report exact changed paths and observed validation.
 
-## Final output
+## Final process output
 
-Build one compact terminal object, then emit it once through `text(...)`. Include status, executed nodes, artifacts, validation, sources used, deviations, blockers, repair use, and live handles. Avoid dumping every raw tool object when a concise handoff or artifact reference is sufficient.
+Build one compact process-terminal object, then emit it once through `text(...)`.
+Include executed nodes, artifacts, scoped validation, sources, deviations,
+blockers, repair use, and outputs from each activated module.
+
+For authority-bearing work, carry the distinct state or outcome from
+[Authority and Decisions](authority-and-decisions.md). Never promote this
+process terminal into workflow success. Avoid raw tool dumps when a concise
+handoff or artifact reference is sufficient.
 
 ```javascript
 let terminalEmitted = false;
@@ -521,23 +411,12 @@ Do not call `exit()` inside the `try` block. Keep early-stop decisions as return
 - A worker that spawns more workers.
 - `while`, recursive retry, or an unbounded polling loop around repair or validation.
 - Parsing validator prose heuristically when strict JSON was requested.
-- Treating a pending `clientThreadId` as a failed task start.
-- Resolving task identity from a generated directory when an exact saved project ID exists.
-- Treating one wait timeout as terminal failure without reading fresh task state.
-- Using only an attempt count when the wait tool can return immediately.
-- Requesting more than the task-read item limit or ignoring structured `items`.
-- Requesting `turnLimit` above 10, or treating a bare-string or error-envelope tool result as an empty snapshot and burning the collection window on it.
-- Paging backwards for a final handoff that a newest-first read already returned on the first page.
 - Slicing JSON to fit a prompt instead of using a compact handoff contract and expansion queue.
 - Treating the compact handoff as the only evidence store and losing source locators or required fields.
 - Letting an audit invent a cutoff, sample size, or scope that conflicts with the declared pilot.
 - Asking one repair worker to fix every record and evidence dimension without record-specific correction shards and one canonical-schema integration.
 - Passing a repair transport shape directly to a formatter that expects a different record schema.
 - Applying a strict shape guard before a declared deterministic transport adapter.
-- Discarding task, agent, or command handles while work may still be running.
-- Creating a replacement task when a valid resume handle exists.
-- Requiring resume handles for later nodes that are still `not_started`.
-- Discarding completed handoffs when one active task exceeds the collection window.
 - Calling `exit()` inside a catchable orchestration block and emitting a second terminal result from `catch`.
 - Using one broad validator when record batches or audit lenses can be checked independently.
 - Emitting only a success message without evidence.
