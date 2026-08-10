@@ -823,12 +823,299 @@ def _worker_reasons(worker: object, prefix: str = "worker") -> list[str]:
     return reasons
 
 
+def _finding_reasons(
+    finding: object,
+    design_revision: object,
+    design_digest: object,
+    review_identity: object,
+    allow_unresolved: bool,
+) -> list[str]:
+    if not isinstance(finding, dict):
+        return ["malformed_review_finding"]
+
+    identity = finding.get("identity")
+    classification = finding.get("classification")
+    required_text = (
+        identity,
+        finding.get("criterion"),
+        finding.get("sanitized_evidence"),
+        finding.get("rationale"),
+        finding.get("clearance_condition"),
+    )
+    if (
+        not all(isinstance(value, str) and value for value in required_text)
+        or classification not in {"must-fix", "advisory"}
+        or not _string_list(finding.get("affected_nodes"))
+        or not finding["affected_nodes"]
+        or finding.get("waiver_policy")
+        not in {"unwaivable", "human-authorized"}
+    ):
+        return ["malformed_review_finding"]
+
+    if classification == "advisory":
+        return []
+
+    disposition = finding.get("disposition")
+    if disposition not in {
+        "repaired",
+        "human-authorized-deviation",
+        "unresolved",
+    }:
+        return ["malformed_review_disposition"]
+    if disposition == "unresolved":
+        return [] if allow_unresolved else ["unresolved_must_fix"]
+
+    clearance = finding.get("clearance")
+    if disposition == "repaired":
+        if (
+            not isinstance(clearance, dict)
+            or clearance.get("finding_identity") != identity
+            or clearance.get("review_identity") != review_identity
+            or clearance.get("design_digest") != design_digest
+        ):
+            return ["missing_independent_clearance"]
+        return []
+
+    if finding["waiver_policy"] != "human-authorized":
+        return ["unwaivable_finding"]
+    if (
+        not isinstance(clearance, dict)
+        or clearance.get("finding_identity") != identity
+        or clearance.get("design_revision") != design_revision
+        or not isinstance(clearance.get("decision_receipt"), str)
+        or not clearance["decision_receipt"]
+    ):
+        return ["inexact_human_deviation"]
+    return []
+
+
+def _review_gate(
+    design_review: object,
+    revision: object,
+    frozen_design_digest: object,
+    allow_previous: bool,
+) -> dict:
+    reasons: list[str] = []
+    if design_review is None:
+        return {"status": "block", "reasons": ["missing_design_review"]}
+    if not isinstance(design_review, dict):
+        return {"status": "block", "reasons": ["malformed_design_review"]}
+
+    design_revision = design_review.get("design_revision")
+    if not isinstance(design_revision, int) or isinstance(design_revision, bool):
+        reasons.append("malformed_design_revision")
+    elif design_revision != revision:
+        reasons.append("stale_design_review")
+
+    design_digest = design_review.get("design_digest")
+    if not isinstance(design_digest, str) or not design_digest:
+        reasons.append("malformed_design_digest")
+    if not isinstance(frozen_design_digest, str) or not frozen_design_digest:
+        reasons.append("missing_frozen_design_digest")
+    elif design_digest != frozen_design_digest:
+        reasons.append("frozen_design_digest_mismatch")
+
+    repair_count = design_review.get("repair_count")
+    if (
+        not isinstance(repair_count, int)
+        or isinstance(repair_count, bool)
+        or repair_count < 0
+    ):
+        reasons.append("malformed_repair_count")
+    elif repair_count > 1:
+        reasons.append("repair_limit_exceeded")
+
+    self_check = design_review.get("self_check")
+    if not isinstance(self_check, dict):
+        reasons.append("missing_self_check")
+    else:
+        if self_check.get("design_digest") != design_digest:
+            reasons.append("self_check_digest_mismatch")
+        if self_check.get("verdict") != "pass":
+            reasons.append("self_check_not_passed")
+        self_check_evidence = self_check.get("evidence_locators")
+        if not _string_list(self_check_evidence) or not self_check_evidence:
+            reasons.append("malformed_self_check_evidence")
+
+    independent_review = design_review.get("independent_review")
+    if not isinstance(independent_review, dict):
+        reasons.append("missing_independent_review")
+        independent_review = {}
+    elif independent_review.get("status") == "timed_out":
+        reasons.append("independent_review_timed_out")
+    elif independent_review.get("status") != "complete":
+        reasons.append("malformed_independent_review_status")
+
+    review_identity = independent_review.get("identity")
+    if not isinstance(review_identity, str) or not review_identity:
+        reasons.append("malformed_review_identity")
+    if independent_review.get("design_digest") != design_digest:
+        reasons.append("review_digest_mismatch")
+
+    verdict = independent_review.get("verdict")
+    if verdict not in {"pass", "repair", "block"}:
+        reasons.append("malformed_review_verdict")
+    if verdict == "block":
+        reasons.append("independent_review_blocked")
+    elif verdict == "repair" and repair_count != 0:
+        reasons.append("repair_limit_exceeded")
+
+    independence = independent_review.get("independence")
+    if (
+        not isinstance(independence, dict)
+        or independence.get("separate_context") is not True
+        or independence.get("read_only") is not True
+        or independence.get("design_authority") is not False
+        or independence.get("mutation_authority") is not False
+    ):
+        reasons.append("unproved_reviewer_independence")
+
+    findings = independent_review.get("findings")
+    if not isinstance(findings, list):
+        reasons.append("malformed_review_findings")
+        findings = []
+    finding_identities = []
+    for finding in findings:
+        reasons.extend(
+            _finding_reasons(
+                finding,
+                design_revision,
+                design_digest,
+                review_identity,
+                allow_unresolved=verdict == "repair" and repair_count == 0,
+            )
+        )
+        if (
+            isinstance(finding, dict)
+            and isinstance(finding.get("identity"), str)
+            and finding["identity"]
+        ):
+            finding_identities.append(finding["identity"])
+    if len(finding_identities) != len(set(finding_identities)):
+        reasons.append("duplicate_finding_identity")
+
+    if verdict == "repair" and not any(
+        isinstance(finding, dict)
+        and finding.get("classification") == "must-fix"
+        and finding.get("disposition") == "unresolved"
+        for finding in findings
+    ):
+        reasons.append("repair_without_must_fix")
+
+    current_findings = {
+        finding["identity"]: finding
+        for finding in findings
+        if isinstance(finding, dict)
+        and isinstance(finding.get("identity"), str)
+        and finding["identity"]
+    }
+    previous_review = design_review.get("previous_review")
+    if repair_count == 0:
+        if previous_review is not None:
+            reasons.append("unexpected_previous_review")
+        if any(
+            isinstance(finding, dict)
+            and finding.get("classification") == "must-fix"
+            and finding.get("disposition") == "repaired"
+            for finding in findings
+        ):
+            reasons.append("repair_count_mismatch")
+    elif repair_count == 1:
+        if not allow_previous:
+            reasons.append("invalid_previous_review")
+        elif not isinstance(previous_review, dict):
+            reasons.append("missing_previous_review")
+        else:
+            previous_revision = previous_review.get("design_revision")
+            previous_digest = previous_review.get("design_digest")
+            previous_gate = _review_gate(
+                previous_review,
+                previous_revision,
+                previous_digest,
+                allow_previous=False,
+            )
+            if previous_gate["status"] != "repair_required":
+                reasons.append("invalid_previous_review")
+            else:
+                if (
+                    not isinstance(previous_revision, int)
+                    or isinstance(previous_revision, bool)
+                    or not isinstance(design_revision, int)
+                    or isinstance(design_revision, bool)
+                    or design_revision <= previous_revision
+                    or previous_digest == design_digest
+                ):
+                    reasons.append("repair_did_not_create_new_revision")
+
+                immutable_fields = (
+                    "identity",
+                    "classification",
+                    "criterion",
+                    "affected_nodes",
+                    "sanitized_evidence",
+                    "rationale",
+                    "clearance_condition",
+                    "waiver_policy",
+                )
+                previous_must_fix = {
+                    finding["identity"]: finding
+                    for finding in previous_gate["independent_review"]["findings"]
+                    if isinstance(finding, dict)
+                    and finding.get("classification") == "must-fix"
+                    and isinstance(finding.get("identity"), str)
+                    and finding["identity"]
+                }
+                for identity, previous_finding in previous_must_fix.items():
+                    current_finding = current_findings.get(identity)
+                    if current_finding is None:
+                        reasons.append("missing_prior_finding")
+                    elif any(
+                        current_finding.get(field) != previous_finding.get(field)
+                        for field in immutable_fields
+                    ):
+                        reasons.append("altered_prior_finding")
+                if any(
+                    finding.get("classification") == "must-fix"
+                    and finding.get("disposition") == "repaired"
+                    and identity not in previous_must_fix
+                    for identity, finding in current_findings.items()
+                ):
+                    reasons.append("unexpected_repaired_finding")
+
+    review_evidence = independent_review.get("evidence_locators")
+    if not _string_list(review_evidence) or not review_evidence:
+        reasons.append("malformed_review_evidence")
+
+    status = "block" if reasons else "pass"
+    if not reasons and verdict == "repair":
+        status = "repair_required"
+    gate = {
+        "status": status,
+        "reasons": list(dict.fromkeys(reasons)),
+        "design_revision": design_revision,
+        "design_digest": design_digest,
+        "frozen_design_digest": frozen_design_digest,
+        "repair_count": repair_count,
+        "previous_review": previous_review,
+        "self_check": self_check,
+        "independent_review": {
+            **independent_review,
+            "findings": findings,
+        },
+    }
+    if status == "repair_required":
+        gate["required_action"] = "repair_design"
+    return gate
+
+
 def _blocked_result(
     reasons: list[str],
     retained_evidence: list[str],
     observed_effects: list[str],
     stopped_workers: list[str],
     revision: object = None,
+    review_gate: dict | None = None,
+    review_checkpoint: object = None,
 ) -> dict:
     preflight = {
         "revision": revision,
@@ -850,14 +1137,25 @@ def _blocked_result(
         "retained_evidence": retained_evidence,
         "observed_effects": observed_effects,
         "workflow_state": {"state": "blocked", "final": True},
+        "review_gate": review_gate or {"status": "not_evaluated", "reasons": []},
+        "review_checkpoint": review_checkpoint,
     }
 
 
-def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
+def evaluate_root_workflow(
+    metadata: object,
+    events: object = (),
+    review_checkpoint: object = None,
+) -> dict:
     """Evaluate authority admission without performing or accepting any work."""
     if not isinstance(metadata, dict):
         return _blocked_result(
-            ["malformed_workflow_metadata"], [], [], [], revision=None
+            ["malformed_workflow_metadata"],
+            [],
+            [],
+            [],
+            revision=None,
+            review_checkpoint=review_checkpoint,
         )
 
     retained_evidence: list[str] = []
@@ -871,6 +1169,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
             observed_effects,
             [],
             revision=metadata.get("revision"),
+            review_checkpoint=review_checkpoint,
         )
     if not isinstance(preflight, dict):
         return _blocked_result(
@@ -879,6 +1178,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
             observed_effects,
             [],
             revision=metadata.get("revision"),
+            review_checkpoint=review_checkpoint,
         )
 
     reasons: list[str] = []
@@ -888,6 +1188,33 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
         reasons.append("malformed_authority_preflight_revision")
     elif revision != metadata.get("revision"):
         reasons.append("stale_authority_preflight")
+
+    checkpoint_valid = review_checkpoint is None
+    prior_repair_used = False
+    checkpoint_state_reasons: list[str] = []
+    if review_checkpoint is not None:
+        if (
+            not isinstance(review_checkpoint, dict)
+            or not isinstance(review_checkpoint.get("design_revision"), int)
+            or isinstance(review_checkpoint.get("design_revision"), bool)
+            or not isinstance(review_checkpoint.get("design_digest"), str)
+            or not review_checkpoint["design_digest"]
+            or not isinstance(
+                review_checkpoint.get("automatic_repair_used"), bool
+            )
+        ):
+            checkpoint_state_reasons.append("malformed_review_checkpoint")
+            reasons.append("malformed_review_checkpoint")
+        else:
+            checkpoint_valid = True
+            prior_repair_used = review_checkpoint["automatic_repair_used"]
+            if (
+                isinstance(revision, int)
+                and not isinstance(revision, bool)
+                and review_checkpoint["design_revision"] > revision
+            ):
+                checkpoint_state_reasons.append("stale_review_checkpoint")
+                reasons.append("stale_review_checkpoint")
 
     decision_loops = preflight.get("reachable_decision_loops")
     if not _string_list(decision_loops):
@@ -920,6 +1247,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
             reasons.append("ambiguous_mutation_owner")
         if any(owner != "root" for owners in mutation_owners.values() for owner in owners):
             reasons.append("worker_owns_durable_mutation")
+
 
     workers = preflight.get("workers")
     if not isinstance(workers, list):
@@ -969,6 +1297,8 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
     runtime_decision = False
     human_decision_required = False
     stopped_workers: list[str] = []
+    current_design_review = metadata.get("design_review")
+    current_design_digest = metadata.get("design_digest")
     for event in events:
         if not isinstance(event, dict):
             reasons.append("malformed_runtime_event")
@@ -998,6 +1328,10 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
                 human_decision_required or event_type == "human_decision_required"
             )
         elif event_type == "worker_mutation_discovered":
+            if "design_review" in event:
+                current_design_review = event["design_review"]
+            if "design_digest" in event:
+                current_design_digest = event["design_digest"]
             role = event.get("worker_role")
             if not isinstance(role, str) or not role:
                 reasons.append("malformed_worker_mutation_discovery")
@@ -1053,6 +1387,113 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
         else:
             reasons.append("unknown_runtime_event")
 
+    review_gate = {"status": "not_applicable", "reasons": []}
+    if any(
+        isinstance(mutation, dict)
+        and isinstance(mutation.get("identity"), str)
+        and mutation["identity"]
+        and mutation.get("owner") == "root"
+        for mutation in mutations
+    ):
+        review_gate = _review_gate(
+            current_design_review,
+            revision,
+            current_design_digest,
+            allow_previous=True,
+        )
+        if checkpoint_state_reasons:
+            review_gate["reasons"] = list(
+                dict.fromkeys(review_gate["reasons"] + checkpoint_state_reasons)
+            )
+            review_gate["status"] = "block"
+            review_gate.pop("required_action", None)
+        if checkpoint_valid:
+            repair_count = review_gate.get("repair_count")
+            verdict = review_gate.get("independent_review", {}).get("verdict")
+            checkpoint_reasons = []
+            if prior_repair_used:
+                if repair_count != 1:
+                    checkpoint_reasons.append("repair_count_mismatch")
+                else:
+                    previous_review = review_gate.get("previous_review")
+                    if (
+                        not isinstance(previous_review, dict)
+                        or previous_review.get("design_revision")
+                        != review_checkpoint["design_revision"]
+                        or previous_review.get("design_digest")
+                        != review_checkpoint["design_digest"]
+                    ):
+                        checkpoint_reasons.append("review_checkpoint_mismatch")
+                if verdict == "repair":
+                    checkpoint_reasons.append("repair_limit_exceeded")
+            elif repair_count == 1:
+                checkpoint_reasons.append("unproved_repair_transition")
+            if checkpoint_reasons:
+                review_gate["reasons"] = list(
+                    dict.fromkeys(review_gate["reasons"] + checkpoint_reasons)
+                )
+                review_gate["status"] = "block"
+                review_gate.pop("required_action", None)
+        reasons.extend(review_gate["reasons"])
+
+    next_review_checkpoint = (
+        review_checkpoint if isinstance(review_checkpoint, dict) else None
+    )
+    if review_checkpoint is not None and not checkpoint_valid:
+        origin_revision = (
+            review_checkpoint.get("design_revision")
+            if isinstance(review_checkpoint, dict)
+            else None
+        )
+        origin_digest = (
+            review_checkpoint.get("design_digest")
+            if isinstance(review_checkpoint, dict)
+            else None
+        )
+        if (
+            not isinstance(origin_revision, int)
+            or isinstance(origin_revision, bool)
+            or not isinstance(origin_digest, str)
+            or not origin_digest
+        ):
+            previous_review = review_gate.get("previous_review")
+            if isinstance(previous_review, dict):
+                origin_revision = previous_review.get("design_revision")
+                origin_digest = previous_review.get("design_digest")
+            else:
+                origin_revision = review_gate.get("design_revision")
+                origin_digest = review_gate.get("design_digest")
+        if (
+            isinstance(origin_revision, int)
+            and not isinstance(origin_revision, bool)
+            and isinstance(origin_digest, str)
+            and origin_digest
+        ):
+            next_review_checkpoint = {
+                "design_revision": origin_revision,
+                "design_digest": origin_digest,
+                "automatic_repair_used": True,
+            }
+        else:
+            next_review_checkpoint = {
+                "state": "unknown",
+                "automatic_repair_used": True,
+            }
+    if (
+        review_gate["status"] == "repair_required"
+        and isinstance(review_gate.get("design_revision"), int)
+        and not isinstance(review_gate["design_revision"], bool)
+        and isinstance(review_gate.get("design_digest"), str)
+        and review_gate["design_digest"]
+    ):
+        next_review_checkpoint = {
+            "design_revision": review_gate["design_revision"],
+            "design_digest": review_gate["design_digest"],
+            "automatic_repair_used": (
+                prior_repair_used or review_gate["status"] == "repair_required"
+            ),
+        }
+
 
     if reasons:
         return _blocked_result(
@@ -1061,6 +1502,8 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
             observed_effects,
             stopped_workers,
             revision=revision,
+            review_gate=review_gate,
+            review_checkpoint=next_review_checkpoint,
         )
 
     selected_topology = "L0" if decision_loops else generic_topology
@@ -1095,14 +1538,17 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
         set(mutation_owners),
     )
 
-    root_may_execute = (
+    review_may_execute = (
         not runtime_decision
         and not human_decision_required
+        and review_gate["status"] in {"pass", "not_applicable"}
+    )
+    root_may_execute = (
+        review_may_execute
         and mutation_admission is not None
         and mutation_admission["status"] == "allow"
     )
-    delegation_may_continue = not runtime_decision and not human_decision_required
-    delegated_work = delegation_may_continue and selected_topology != "L0"
+    delegated_work = review_may_execute and selected_topology != "L0"
     mutation_blocked = (
         mutation_admission is not None
         and mutation_admission["status"] == "blocked"
@@ -1119,6 +1565,8 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
         "retained_evidence": retained_evidence,
         "observed_effects": observed_effects,
         "mutation_admission": mutation_admission,
+        "review_gate": review_gate,
+        "review_checkpoint": next_review_checkpoint,
         "workflow_state": {
             "state": (
                 "human_decision_required"
