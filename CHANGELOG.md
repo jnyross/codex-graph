@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## [0.6.2] - 2026-08-10
+
+- WF-04: Gate designs on exact-revision review (#53)
+
 ## [0.6.1] - 2026-08-10
 
 - fix: make Windows regression script runnable in isolated environments (#55)

@@ -101,7 +101,9 @@ verdict semantics.
 ## Add regression coverage with new features
 
 Every pull request runs the Windows suite automatically. When a feature
-changes orchestration behavior, add a scenario to
+changes root-owned reliability behavior, add a scenario to
+`skills/codex-graph/scripts/test_root_workflow.py`. For task collection or
+generated workflow structure, add a scenario to
 `skills/codex-graph/scripts/task_collection_harness.test.js` or a canonical
 structural case under `skills/codex-graph/testcases/cases/` before opening the
 pull request.
