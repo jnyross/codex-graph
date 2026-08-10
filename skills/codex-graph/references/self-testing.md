@@ -1,8 +1,12 @@
 # Bounded workflow self-testing
 
 Use this reference when the user asks the skill to test, package, monitor, or
-improve a generated workflow. Self-testing validates the generated artifact; it
-does not execute the user's underlying goal in the parent turn.
+improve a generated workflow. It owns the bounded candidate self-test only.
+Self-testing validates the generated artifact; it does not execute the user's
+underlying goal, grant authority, prove external state, or determine the final
+workflow outcome. Authority-bearing candidates also use
+[Authority and Decisions](authority-and-decisions.md) and
+[Evidence and Acceptance](evidence-and-acceptance.md).
 
 ## 1. Keep the evaluation harness outside the work graph
 
@@ -109,7 +113,8 @@ scoped test goal.
 
 When active, the parent terminal object includes:
 
-- `self_test.status`: `passed`, `blocked`, or `failed`;
+- `self_test.status`: `passed`, `blocked`, or `failed`, scoped only to this
+  candidate self-test;
 - `candidate_id`, bundle identity, and fixed test contract;
 - child run handles and terminal verdicts for the initial and repair runs;
 - observed evidence and validation decision;

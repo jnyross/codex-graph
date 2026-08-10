@@ -1,6 +1,10 @@
 # Codex task lifecycle
 
-Read this reference whenever a Code Mode graph creates visible Codex tasks or threads. Treat creation, setup, execution, collection, and terminal reporting as separate states.
+Read this reference whenever a Code Mode graph creates visible Codex tasks or
+threads. It owns task creation, setup, execution, collection, resumable handles,
+and attempt-level reporting only. For authority-bearing workflow revisions,
+effect boundaries, continuation, and final outcomes, also use
+[Authority and Decisions](authority-and-decisions.md).
 
 ## 1. Bind the graph to its project
 
@@ -453,27 +457,12 @@ blocked terminal.
 
 Require the repair prompt to demand an explicit post-repair marker in the corrected handoff (for example a `corrected_at` timestamp) and filter recollection on that marker; add cursor or turn-id provenance when the read tool provides it. Never correlate by array index into a returned turn list. A stale pre-repair handoff is not a corrected handoff. Reads may return a clipped window, and a clipped window is not proof of absence — a handoff not yet visible means keep polling within budget under the collection read-bounds contract. Observed: Lisbon dogfood v5 — the repair recollect re-read the thread from the start, found the original pre-repair handoff first, and reinstalled identical data, so the repair stage was a guaranteed no-op.
 
-## 4. Make handoffs fit before execution
+## 4. Route handoff serialization
 
-Require one JSON object with decisive evidence only. Do not set a character budget until the active tool declares one or an observed run proves it is needed.
-
-Treat that object as a compact routing index. It must not become the only copy of evidence needed for acceptance. Give records stable IDs and preserve complete source URLs, roles, dates, locators, and required fields in an approved durable artifact. Return its path or identifier and hash. Do not substitute unexplained source aliases for required evidence.
-
-Use these overflow routes:
-
-- `artifact.expansion_queue` for deferred candidates;
-- `unresolved_questions` for open issues;
-- an approved durable artifact with a returned path, identifier, and hash when evidence must stay complete.
-
-Integration inputs must be complete JSON. Concatenate upstream handoffs when they fit the active tool contract. If an observed payload limit is reached, pass a compact join manifest or artifact references and use staged fan-in only for the affected portion. If a handoff or join is too large, report the actual size and preserve resumable handles. Never slice serialized JSON.
-
-Validate every handoff against one canonical schema. If a worker uses a compact transport shape, normalize it deterministically before the next node. Final formatting must consume only canonical validated records and must fail closed on missing required fields rather than emitting `null` values.
-
-Run declared transport adapters before shape and cardinality guards. An adapter must be deterministic, resolve every referenced stable ID exactly once, preserve the complete canonical record table, and reject missing, duplicate, or unknown IDs. Do not infer an adapter for an undeclared shape during execution.
-
-Read tools can impose a per-item limit even when the outer Code Mode result
-budget is larger. Use the active declaration; do not invent a smaller
-application-level budget.
+Use [Handoffs and joins](code-mode-script-patterns.md#handoffs-and-joins) for
+generic handoff shape, durable artifacts, manifests, adapters, and staged
+fan-in. This lifecycle module adds only task identity and collection rules. It
+does not redefine generic handoff serialization.
 
 ## 5. Report exact failures and live state
 
@@ -501,9 +490,10 @@ On any blocked terminal result, include:
 
 If a fixed model is at capacity, keep the model policy. Permit one clean same-model retry only when the graph declares that operational retry. Give it a new run tag. Otherwise stop with the capacity error. Operational setup or capacity retries do not consume the artifact-repair allowance, but they must be explicit and bounded.
 
-## 6. Resume without duplicate tasks
+## 6. Resume task collection without duplicate tasks
 
-For an L4 long graph, accept an explicit checkpoint with three node states:
+For an L4 long graph, accept the task-lifecycle portion of the current
+checkpoint with three node states:
 
 - `complete`: reuse its compact, schema-valid handoff;
 - `active`: validate its live handle and continue collection;
@@ -530,17 +520,27 @@ build a checkpoint containing:
 - executed and skipped stages;
 - the active-tool limit or observed condition that caused the stop.
 
-Return the checkpoint with the blocked result. A later run resumes active nodes, reuses completed handoffs, and starts future nodes normally. It does not repeat completed work.
+Return these task-lifecycle fields with the scoped blocked attempt result. A
+later run may resume active nodes, reuse completed handoffs, and start future
+nodes only when the current workflow checkpoint and dispatch authority permit
+it. It does not create a second task for an existing handle. Recorded action
+attempts follow the non-replay rules in
+[Authority and Decisions](authority-and-decisions.md).
 
 ## 7. Emit one terminal result
 
 Build terminal data through normal return values. Use one `terminalEmitted` guard and one final `text(...)` call. Do not call `exit()` inside the main `try` block. In some orchestration layouts, the exit signal can enter `catch` and produce a second terminal object.
 
-Keep terminal states explicit:
+Keep task-result status values explicit:
 
-- `passed`: acceptance evidence exists;
-- `blocked`: progress needs access, capacity, valid transport, or user authority;
-- `failed`: the single artifact repair and revalidation did not pass.
+- `passed`: the task or collection contract is satisfied;
+- `blocked`: the task cannot safely progress; and
+- `failed`: the task contract is authoritatively contradicted or its bounded
+  repair does not pass.
+
+These states describe this task lifecycle only. They do not establish the final
+workflow outcome, which is owned by
+[Authority and Decisions](authority-and-decisions.md).
 
 A blocked or failed terminal must preserve `executed_nodes` reflecting actual progress; never reset it to an empty list in a catch path.
 
