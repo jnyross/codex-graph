@@ -337,6 +337,15 @@ def _field_coverage_complete(
         for target_id in target_ids
         for field in required_fields
     }
+    if not all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("item_id"), str)
+        and bool(entry["item_id"])
+        and isinstance(entry.get("field"), str)
+        and bool(entry["field"])
+        for entry in coverage
+    ):
+        return False
     actual = {
         (entry.get("item_id"), entry.get("field"))
         for entry in coverage

@@ -614,6 +614,19 @@ class RootWorkflowTests(unittest.TestCase):
             "blocked",
         )
 
+        for key, value in (("item_id", []), ("field", {})):
+            with self.subTest(malformed_coverage_key=key):
+                malformed = metadata()
+                malformed["mutation_admission"]["transport_proof"][
+                    "field_coverage"
+                ][0][key] = value
+                self.assertEqual(
+                    evaluate_root_workflow(malformed)["mutation_admission"][
+                        "status"
+                    ],
+                    "blocked",
+                )
+
     def test_recovery_requires_progress_and_returns_bounded_forensics(self):
         fixture = metadata()
         proof = fixture["mutation_admission"]["transport_proof"]
