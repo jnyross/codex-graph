@@ -24,6 +24,7 @@ The second part must contain real, complete JavaScript. Do not merely tell a lat
 6. When the goal concerns the current repository, inspect only high-signal context needed to tailor the workflow: applicable `AGENTS.md`, `README*`, manifests, test configuration, and directly named files. Do not perform the underlying audit or implementation.
 7. When the user supplies an existing graph, preserve its intended semantics and improve only what is required for executability, safety, or boundedness.
 8. If the user requests automated testing or self-improvement, activate the self-testing protocol in `references/self-testing.md`. Treat the generated skill as a candidate artifact and test it in an isolated child thread; do not recursively self-test the tester.
+9. For an explicit `case_id`, use the single resolver and generation/validation binding in `testcases/README.md`; reject custom, missing, inferred, substituted, or mismatched cases, and emit its required structural artifacts. Without an explicit `case_id`, do not attach a testcase.
 
 ## Classify the goal
 

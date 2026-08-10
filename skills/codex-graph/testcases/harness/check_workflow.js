@@ -1,41 +1,47 @@
 #!/usr/bin/env node
 "use strict";
 
-// CLI: statically check a generated Code Mode workflow.js against one
-// test case's machine contract.
+// Offline structural conformance CLI.
 //
-//   node check_workflow.js --case <case-id> --script <path/to/workflow.js>
-//
-// Prints one JSON verdict {ok, case, checks:[{id, ok, detail}]} and exits
-// non-zero when any check fails.
+// node check_workflow.js --case <id> --metadata <metadata.json>
+//   --graph <graph.mmd> --script <workflow.js>
 
 const fs = require("node:fs");
-const { listCaseIds, loadCase, checkWorkflowText } = require("./expectations.js");
+const { checkConformance, listCaseIds } = require("./conformance.js");
 
 function parseArgs(argv) {
-  const args = { case: undefined, script: undefined };
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === "--case") args.case = argv[++i];
-    else if (argv[i] === "--script") args.script = argv[++i];
-    else {
-      process.stderr.write(`unknown argument: ${argv[i]}\n`);
-      process.exit(2);
+  const args = {};
+  for (let index = 0; index < argv.length; index += 2) {
+    const key = argv[index];
+    const value = argv[index + 1];
+    if (!["--case", "--metadata", "--graph", "--script"].includes(key) || !value) {
+      throw new Error(`invalid argument: ${key ?? ""}`);
     }
+    args[key.slice(2)] = value;
   }
   return args;
 }
 
-const args = parseArgs(process.argv.slice(2));
-if (!args.case || !args.script) {
-  process.stderr.write(
-    `usage: check_workflow.js --case <id> --script <workflow.js>\n` +
-      `cases: ${listCaseIds().join(", ")}\n`,
-  );
-  process.exit(2);
+try {
+  const args = parseArgs(process.argv.slice(2));
+  if (!args.case || !args.metadata || !args.graph || !args.script) {
+    throw new Error(
+      `usage: check_workflow.js --case <id> --metadata <metadata.json> ` +
+        `--graph <graph.mmd> --script <workflow.js>\n` +
+        `cases: ${listCaseIds().join(", ")}`,
+    );
+  }
+  const verdict = checkConformance({
+    case_id: args.case,
+    artifacts: {
+      metadata: JSON.parse(fs.readFileSync(args.metadata, "utf8")),
+      graph: fs.readFileSync(args.graph, "utf8"),
+      executable: fs.readFileSync(args.script, "utf8"),
+    },
+  });
+  process.stdout.write(`${JSON.stringify(verdict, null, 2)}\n`);
+  process.exitCode = verdict.ok ? 0 : 1;
+} catch (error) {
+  process.stderr.write(`${error.message}\n`);
+  process.exitCode = 2;
 }
-
-const testCase = loadCase(args.case);
-const scriptText = fs.readFileSync(args.script, "utf8");
-const verdict = checkWorkflowText(scriptText, testCase.expectations);
-process.stdout.write(`${JSON.stringify(verdict, null, 2)}\n`);
-process.exit(verdict.ok ? 0 : 1);

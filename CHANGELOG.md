@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## Unreleased
+
+- feat: replace all six lexical testcase bundles with explicit canonical-goal bindings, normalized structural contracts, one resolver and role-normalized offline conformance verdict (#42)
+
 ## [0.5.6] - 2026-08-09
 
 - fix: require configured await-call helper names to be standalone targets instead of member/property or identifier-suffix matches, and align the slice-generators testcase with the canonical `N3` integration-node vocabulary
@@ -30,7 +34,7 @@ All notable product releases are documented here.
 
 ## [0.5.0] - 2026-08-09
 
-- feat: dynamic-workflow golden test cases under `skills/codex-graph/testcases/` — six case bundles derived from real Grok Rhai and Claude multi-agent orchestration shapes (atomic screen fan-out, slice generators, sealed POV + adversarial fact-check, non-binding synthesis, dual validation, disjoint worktree writers), an offline expectations checker (`harness/`), pattern-derived collection tests, and catalog research in `docs/dynamic-workflow-testcase-catalog.md`; both regression runners now execute the new suite and lint the topology hints (#16)
+- feat: dynamic-workflow golden test cases under `skills/codex-graph/testcases/` — six case bundles derived from real Grok Rhai and Claude multi-agent orchestration shapes (atomic screen fan-out, slice generators, sealed POV + adversarial fact-check, non-binding synthesis, dual validation, disjoint worktree writers), an offline expectations checker, pattern-derived collection tests, and source-shape research; both regression runners execute the suite (#16)
 
 ## [0.4.5] - 2026-08-09
 

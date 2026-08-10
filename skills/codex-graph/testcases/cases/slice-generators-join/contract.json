@@ -1,0 +1,228 @@
+{
+  "case_id": "slice-generators-join",
+  "schema_version": "1",
+  "canonical_goal_digest": "7f348aa4f862c6752c98e9fa15da77c897a04fd6686d48608e83bf3a15fe95f3",
+  "role_instances": [
+    {
+      "role": "contract_owner",
+      "kind": "contract"
+    },
+    {
+      "role": "generator_01",
+      "kind": "discovery"
+    },
+    {
+      "role": "generator_02",
+      "kind": "discovery"
+    },
+    {
+      "role": "generator_03",
+      "kind": "discovery"
+    },
+    {
+      "role": "generator_04",
+      "kind": "discovery"
+    },
+    {
+      "role": "generator_05",
+      "kind": "discovery"
+    },
+    {
+      "role": "generator_06",
+      "kind": "discovery"
+    },
+    {
+      "role": "generator_07",
+      "kind": "discovery"
+    },
+    {
+      "role": "generator_08",
+      "kind": "discovery"
+    },
+    {
+      "role": "generator_09",
+      "kind": "discovery"
+    },
+    {
+      "role": "generator_10",
+      "kind": "discovery"
+    },
+    {
+      "role": "integration_owner",
+      "kind": "integration"
+    },
+    {
+      "role": "result_terminal",
+      "kind": "terminal"
+    }
+  ],
+  "topology": [
+    {
+      "from": "contract_owner",
+      "to": "generator_01"
+    },
+    {
+      "from": "contract_owner",
+      "to": "generator_02"
+    },
+    {
+      "from": "contract_owner",
+      "to": "generator_03"
+    },
+    {
+      "from": "contract_owner",
+      "to": "generator_04"
+    },
+    {
+      "from": "contract_owner",
+      "to": "generator_05"
+    },
+    {
+      "from": "contract_owner",
+      "to": "generator_06"
+    },
+    {
+      "from": "contract_owner",
+      "to": "generator_07"
+    },
+    {
+      "from": "contract_owner",
+      "to": "generator_08"
+    },
+    {
+      "from": "contract_owner",
+      "to": "generator_09"
+    },
+    {
+      "from": "contract_owner",
+      "to": "generator_10"
+    },
+    {
+      "from": "generator_01",
+      "to": "integration_owner"
+    },
+    {
+      "from": "generator_02",
+      "to": "integration_owner"
+    },
+    {
+      "from": "generator_03",
+      "to": "integration_owner"
+    },
+    {
+      "from": "generator_04",
+      "to": "integration_owner"
+    },
+    {
+      "from": "generator_05",
+      "to": "integration_owner"
+    },
+    {
+      "from": "generator_06",
+      "to": "integration_owner"
+    },
+    {
+      "from": "generator_07",
+      "to": "integration_owner"
+    },
+    {
+      "from": "generator_08",
+      "to": "integration_owner"
+    },
+    {
+      "from": "generator_09",
+      "to": "integration_owner"
+    },
+    {
+      "from": "generator_10",
+      "to": "integration_owner"
+    },
+    {
+      "from": "integration_owner",
+      "to": "result_terminal",
+      "outcome": "complete"
+    }
+  ],
+  "environments": {
+    "contract_owner": "local",
+    "generator_01": "local",
+    "generator_02": "local",
+    "generator_03": "local",
+    "generator_04": "local",
+    "generator_05": "local",
+    "generator_06": "local",
+    "generator_07": "local",
+    "generator_08": "local",
+    "generator_09": "local",
+    "generator_10": "local",
+    "integration_owner": "local",
+    "result_terminal": "local"
+  },
+  "concurrency": [
+    [
+      "generator_01",
+      "generator_02",
+      "generator_03",
+      "generator_04",
+      "generator_05",
+      "generator_06",
+      "generator_07",
+      "generator_08",
+      "generator_09",
+      "generator_10"
+    ]
+  ],
+  "gates": [],
+  "repair_edges": [],
+  "terminal_paths": [
+    {
+      "from": "integration_owner",
+      "to": "result_terminal",
+      "outcome": "complete"
+    }
+  ],
+  "collection": {
+    "read_first": true,
+    "read_after_wait": true,
+    "max_output_chars_per_item": 20000,
+    "parse_result": "whole_json_once"
+  },
+  "assertions": [
+    {
+      "id": "literal:generators-do-not-deduplicate",
+      "operator": "excludes_exact_text",
+      "roles": [
+        "generator_01",
+        "generator_02",
+        "generator_03",
+        "generator_04",
+        "generator_05",
+        "generator_06",
+        "generator_07",
+        "generator_08",
+        "generator_09",
+        "generator_10"
+      ],
+      "field": "prompt",
+      "value": "deduplicate the pool"
+    },
+    {
+      "id": "literal:generators-do-not-own-coverage",
+      "operator": "excludes_exact_text",
+      "roles": [
+        "generator_01",
+        "generator_02",
+        "generator_03",
+        "generator_04",
+        "generator_05",
+        "generator_06",
+        "generator_07",
+        "generator_08",
+        "generator_09",
+        "generator_10"
+      ],
+      "field": "prompt",
+      "value": "enforce global coverage"
+    }
+  ]
+}

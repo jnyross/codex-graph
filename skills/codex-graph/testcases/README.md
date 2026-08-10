@@ -1,107 +1,97 @@
-# codex-graph dynamic-workflow test cases
+# codex-graph testcase conformance
 
-Golden test cases derived from real Grok (Rhai) and Claude multi-agent
-orchestration shapes. Each case is a synthetic, anonymized goal plus
-machine-checkable expectations about the graph and Code Mode script that
-`$codex-graph` should produce for it. Provenance and shape analysis:
-`docs/dynamic-workflow-testcase-catalog.md` at the repository root.
+These six offline cases bind generation to one canonical goal and one immutable structural contract. A testcase pass proves only offline conformance. It does not prove runtime behavior, external facts, transport completeness, post-state, or permission to execute.
 
-Nothing here requires a live ChatGPT Desktop run. The harness is offline and
-static; live dogfood stays in the separate lab repository.
+## Binding
+
+A prompt author must select an exact `case_id` before generation. Call `resolveCase({ case_id })` from `harness/conformance.js`. The resolver loads `GOAL.md` and `contract.json` together, validates and normalizes the contract, checks the canonical-goal digest, calculates the contract digest, and returns one deeply frozen binding.
+
+Do not combine a selected case with a custom goal. Missing, unknown, ambiguous, duplicate, contradictory, or digest-mismatched facts fail closed. The resolver never selects a nearby case.
+
+Generation and validation must use the same resolved binding. Generated metadata must echo:
+
+- `case_id`;
+- `schema_version`;
+- `canonical_goal_digest`;
+- `contract_digest`;
+- `artifact_digest`;
+- `proof_scope: "offline-structural-conformance-only"`;
+- a one-to-one `role_map` from contract roles to graph-local node identities; and
+- the generated structural declarations.
+
+The generated Mermaid graph and executable must use the mapped graph-local identities. The executable must export the same structure for offline parsing, for example:
+
+```js
+const workflowStructure = {
+  nodes: [],
+  edges: [],
+  concurrency: [],
+  gates: [],
+  repair_edges: [],
+  terminal_paths: [],
+  collection: {},
+};
+
+if (typeof module !== "undefined") module.exports = workflowStructure;
+await runWorkflow(workflowStructure);
+```
+
+The executable must pass that same object to its single `runWorkflow` entry. The guarded export is inert in Code Mode and gives the offline matcher one parsed executable field. It is not a second declaration of the contract.
+
+## Contract ownership
+
+- The skill owns semantic-role meanings and reliability invariants.
+- `harness/conformance.js` owns contract field and matcher semantics.
+- Each case owns its required role instances, topology, environments, concurrency, gates, repair edges, terminal paths, and exact-text assertions.
+- Each generated artifact set owns its graph-local node identities and role mapping.
+
+Semantic role kinds are:
+
+- `contract`: freezes case scope and machine facts;
+- `discovery`: gathers one bounded read-only input;
+- `writer`: changes one declared isolated scope;
+- `validator`: checks one declared criterion;
+- `integration`: combines handoffs under one owner;
+- `gate`: routes using declared outcomes;
+- `repair`: applies the one declared bounded repair;
+- `terminal`: ends one declared path.
+
+Role instance names are case-local semantic identities. Generated node IDs are artifact-local. Neither is a universal node alphabet.
 
 ## Layout
 
-```
+```text
 testcases/
-  catalog.json            machine index of all cases
   cases/<id>/
-    GOAL.md               free-form user goal, as $codex-graph would receive it
-    EXPECTATIONS.md       prose + one fenced json block of machine expectations
-    topology.hint.mmd     expected Mermaid shape (must pass graph_coherence.py)
+    GOAL.md          canonical goal
+    contract.json    canonical normalized-contract source
   harness/
-    expectations.js       loader + static workflow.js checker (library)
-    check_workflow.js     CLI: check a generated workflow.js against a case
-    testcases.test.js     node --test suite for the bundle and the checker
+    conformance.js   resolver, digest calculation, and structural matcher
+    check_workflow.js
+    testcases.test.js
 ```
 
-## Running
+There is no catalog authority, topology hint, expectation document, lexical matcher, or compatibility loader. Case discovery reads the case directories. There is no standalone JSON Schema because the resolver is the only schema consumer.
+
+## Conformance
+
+The matcher parses `workflow.js` once with Acorn without evaluating it, uses the bundle's shared Mermaid parser, and compares the contract, metadata, graph, and executable after role normalization. The artifact digest covers the complete generated metadata, graph source, and executable source. Literal assertions inspect only the named parsed field where exact text is the contract. Comments and unrelated identifiers receive no credit.
+
+A verdict contains case, schema, contract, and artifact identities; stable criterion IDs; structural locators; unmatched facts; pass/fail state; and the explicit offline-only scope.
+
+Run the focused seam:
 
 ```bash
+npm ci
 node --test skills/codex-graph/testcases/harness/testcases.test.js
-python3 skills/codex-graph/scripts/graph_coherence.py \
-  skills/codex-graph/testcases/cases/*/topology.hint.mmd
 ```
 
-To check a generated script against a case:
+Check one generated artifact set:
 
 ```bash
 node skills/codex-graph/testcases/harness/check_workflow.js \
-  --case atomic-screen-fanout --script /path/to/workflow.js
+  --case atomic-screen-fanout \
+  --metadata /path/to/metadata.json \
+  --graph /path/to/graph.mmd \
+  --script /path/to/workflow.js
 ```
-
-The checker prints one JSON verdict: `{ok, case, checks:[{id, ok, detail}]}`
-and exits non-zero when any check fails.
-
-## What each case proves
-
-| Case | Real-world source shape | Skill contracts exercised |
-|---|---|---|
-| `atomic-screen-fanout` | Grok destination/hotel screen phase: one atomic verdict agent per candidate, root-owned fail-open policy | #13 read-first collection; #12 node-local screen prompts; per-node local env; bounded collection |
-| `slice-generators-join` | Grok atomic generators per region/archetype with one dedupe owner | #11 tool-result normalization; single integration owner; no nested delegation |
-| `sealed-pov-factcheck` | Grok sealed decision packs + one adversarial fact-checker per pack | #12 sealed worker scoping; fail-closed evidence; durable artifact + compact handoffs |
-| `nonbinding-synthesis-gate` | Grok non-binding light synthesis (human ranks); inverse of Lisbon self-block defect | #12 synthesis never owns publication or self-blocks; #13 |
-| `adversarial-dual-validation` | Grok blind vote panels / A-B research arms; Claude review-scorer panels | Fail-closed malformed verdicts; index-arithmetic regroup; one root gate |
-| `disjoint-writers-worktree` | Claude disjoint implement teammates in isolated worktrees | #14 per-node environment + pending clientThreadId resolution; disjoint write scopes; root-owned publication |
-
-Contract IDs refer to shipped fixes: #11 `d06ccb9`, #12 `7ea5de3`,
-#13 `dce28be`, #14 `1a1828a`.
-
-## Expectation semantics
-
-The fenced `json` block in each `EXPECTATIONS.md` is the machine contract.
-Recognized fields (all optional unless noted):
-
-- `case_id` (required) — must match the directory and `catalog.json`.
-- `task_family`, `baseline_tier` — documentation, echoed by the checker.
-- `required_node_ids` — every ID must appear verbatim in the script.
-- `parallel_groups` — arrays of node IDs expected to run in one settled
-  batch; when present the script must contain `Promise.allSettled`.
-- `env` — `{ "local": [ids], "worktree": [ids] }`. Rules enforced:
-  worktree list empty → the script must not create worktree environments;
-  both lists non-empty → the script must create both env types (a global
-  worktree for one writer is the #14 regression).
-- `collection` — `{ "read_first": true, "read_after_wait": true,
-  "max_output_chars_per_item": 20000 }`. Declaring `collection` requires at
-  least one await-adjacent tool or resolved-helper call site
-  (`collection:call-sites`) — a call-free script fails outright. Ordering
-  is judged on **await-adjacent call sites**, so parameter lists, bindings,
-  and comments cannot flip the verdict. Helper names bound to exactly one
-  of the two tools — a function-like binding (`const readFor = … =>`,
-  `resolveTool`, `.bind`) or a declared function whose bounded body window
-  references the tool — count only when awaited as standalone call targets;
-  member/property and identifier-suffix matches do not count. A helper
-  touching both tools is ambiguous and votes for neither, so mixed collectors
-  (direct wait, wrapped reads) are judged correctly.
-  `read_first` fails when the first wait call site precedes any read call
-  site; `read_after_wait` requires a read call site after the first wait.
-  When no call sites resolve at all, ordering is not judged — the
-  call-sites check governs. The item budget caps every literal
-  `maxOutputCharsPerItem` in the script.
-- `single_repair` — requires a `repairUsed` marker in the script.
-- `terminal_guard` — requires a `terminalEmitted` marker.
-- `pending_setup_resolution` — requires the `clientThreadId` identifier
-  **plus** evidence of a bounded resolution loop in the same script: a
-  named attempts constant (`START_RESOLVE_ATTEMPTS`, `RESOLVE_ATTEMPTS`,
-  `MAX_SETUP_POLLS`, `resolveBounds`) or a task-list poll
-  (`list_threads`/`listThreads`). Merely storing or testing the identifier
-  is the canonical #14 failure and does not pass.
-- `required_snippets` / `forbidden_snippets` — literal substrings that must
-  or must not appear anywhere in the script. Used, for example, to forbid
-  publication-rule phrases inside mid-graph worker prompts (#12 is enforced
-  as a textual heuristic; the phrases are chosen so a correctly scoped
-  script never contains them).
-
-Static checks are deliberately conservative: they catch the regression
-classes observed in lab runs (wait-only collection, global worktree,
-over-scoped worker prompts, unbounded budgets) without pretending to
-execute the script.

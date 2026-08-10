@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import re
 import sys
 import tempfile
@@ -85,7 +86,6 @@ _KEYWORDS = {
     "accDescr",
 }
 
-
 class Graph:
     def __init__(
         self,
@@ -93,11 +93,15 @@ class Graph:
         labels: Dict[str, str],
         edges: List[Tuple[str, str]],
         unparsed: Optional[List[str]] = None,
+        edge_outcomes: Optional[List[Tuple[str, str, Optional[str]]]] = None,
     ):
         self.nodes = nodes
         self.labels = labels
         self.edges = edges
         self.unparsed = unparsed or []
+        self.edge_outcomes = edge_outcomes or [
+            (source, target, None) for source, target in edges
+        ]
         self.outdeg = {n: 0 for n in nodes}
         self.indeg = {n: 0 for n in nodes}
         self.children: Dict[str, List[str]] = {n: [] for n in nodes}
@@ -214,6 +218,7 @@ def _parse_statement(
     labels: Dict[str, str],
     edges: List[Tuple[str, str]],
     unparsed: List[str],
+    edge_outcomes: List[Tuple[str, str, Optional[str]]],
 ) -> List[str]:
     """Parse one statement; return every id it mentions (declared or referenced).
 
@@ -223,6 +228,7 @@ def _parse_statement(
     seen: List[str] = []
     node_count = len(nodes)
     edge_count = len(edges)
+    outcome_count = len(edge_outcomes)
     label_snapshot = dict(labels)
 
     def bail(at: int) -> List[str]:
@@ -235,6 +241,7 @@ def _parse_statement(
         # top of the one real complaint.
         del nodes[node_count:]
         del edges[edge_count:]
+        del edge_outcomes[outcome_count:]
         labels.clear()
         labels.update(label_snapshot)
         return []
@@ -252,6 +259,7 @@ def _parse_statement(
     length = len(stmt)
     previous: List[str] = []
     direction = "forward"
+    outcome: Optional[str] = None
     while index < length:
         group: List[str] = []
         while True:
@@ -298,16 +306,19 @@ def _parse_statement(
                     if pair not in emitted:
                         emitted.add(pair)
                         edges.append(pair)
+                        edge_outcomes.append((pair[0], pair[1], outcome))
         previous = group
         link = _LINK_RE.match(stmt, index)
         if not link:
             return bail(index)
         direction = _link_direction(link.group(0))
         index = link.end()
+        outcome = None
         if index < length and stmt[index] == "|":
             close = stmt.find("|", index + 1)
             if close == -1:
                 return bail(index)
+            outcome = stmt[index + 1 : close].strip()
             index = close + 1
     return seen
 
@@ -315,6 +326,7 @@ def _parse_statement(
 def _expand_container_edges(
     edges: List[Tuple[str, str]],
     members: Dict[str, List[str]],
+    edge_outcomes: List[Tuple[str, str, Optional[str]]],
 ) -> None:
     """Wire edges on a subgraph id through to the members it stands for.
 
@@ -322,6 +334,15 @@ def _expand_container_edges(
     applies to the whole group. Without this, members wired only via their
     container look orphaned.
     """
+    def outcome_for(source: str, target: str) -> Optional[str]:
+        return next(
+            (
+                outcome
+                for edge_source, edge_target, outcome in reversed(edge_outcomes)
+                if edge_source == source and edge_target == target
+            ),
+            None,
+        )
     for container, group in members.items():
         inside = set(group)
         if not inside:
@@ -335,15 +356,22 @@ def _expand_container_edges(
             for entry in entries:
                 if (source, entry) not in edges:
                     edges.append((source, entry))
+                    edge_outcomes.append(
+                        (source, entry, outcome_for(source, container))
+                    )
         for target in outgoing:
             for exit_node in exits:
                 if (exit_node, target) not in edges:
                     edges.append((exit_node, target))
+                    edge_outcomes.append(
+                        (exit_node, target, outcome_for(container, target))
+                    )
 
 
 def parse_flowchart(body: str) -> Graph:
     nodes: List[str] = []
     labels: Dict[str, str] = {}
+    edge_outcomes: List[Tuple[str, str, Optional[str]]] = []
     edges: List[Tuple[str, str]] = []
     subgraph_ids: Set[str] = set()
     members: Dict[str, List[str]] = {}
@@ -370,19 +398,21 @@ def parse_flowchart(body: str) -> Graph:
             elif head == "end" and open_containers:
                 open_containers.pop()
             continue
-        mentioned = _parse_statement(line, nodes, labels, edges, unparsed)
+        mentioned = _parse_statement(
+            line, nodes, labels, edges, unparsed, edge_outcomes
+        )
         # A node may be declared before its subgraph and only listed by id
         # inside it, so every id a statement mentions counts as a member.
         for container_id in open_containers:
             for node_id in mentioned:
                 if node_id not in members[container_id]:
                     members[container_id].append(node_id)
-    _expand_container_edges(edges, members)
+    _expand_container_edges(edges, members, edge_outcomes)
     endpoints = {n for edge in edges for n in edge}
     nodes = [n for n in nodes if n not in subgraph_ids or n in endpoints]
-    # Mermaid allows a subgraph id as an edge endpoint; then it is a real node.
     nodes.extend(sorted(s for s in subgraph_ids if s in endpoints and s not in nodes))
-    return Graph(nodes, labels, edges, unparsed)
+    # Mermaid allows a subgraph id as an edge endpoint; then it is a real node.
+    return Graph(nodes, labels, edges, unparsed, edge_outcomes)
 
 
 def check_graph(g: Graph) -> List[str]:
@@ -454,7 +484,7 @@ def _is_statement_like(line: str) -> bool:
     if head in _KEYWORDS:
         return True
     residue: List[str] = []
-    _parse_statement(stripped, [], {}, [], residue)
+    _parse_statement(stripped, [], {}, [], residue, [])
     return not residue
 
 
@@ -882,6 +912,37 @@ def _report(problems: List[str]) -> int:
 
 
 def main(argv: List[str]) -> int:
+    if argv == ["--parse-stdin-json"]:
+        text = sys.stdin.read()
+        blocks = extract_blocks(text)
+        if len(blocks) != 1:
+            print("ERROR: expected exactly one flowchart", file=sys.stderr)
+            return 2
+        graph = parse_flowchart(blocks[0][1])
+        if graph.unparsed:
+            print(
+                "ERROR: unparsed Mermaid statements: " + ", ".join(graph.unparsed),
+                file=sys.stderr,
+            )
+            return 2
+        json.dump(
+            {
+                "nodes": sorted(graph.nodes),
+                "edges": [
+                    {
+                        "from": source,
+                        "to": target,
+                        **({} if outcome is None else {"outcome": outcome}),
+                    }
+                    for source, target, outcome in sorted(
+                        graph.edge_outcomes,
+                        key=lambda edge: (edge[0], edge[1], edge[2] or ""),
+                    )
+                ],
+            },
+            sys.stdout,
+        )
+        return 0
     if "--selfcheck" in argv:
         fails = selftest()
         print("graph_coherence selfcheck: " + ("PASS" if fails == 0 else f"{fails} FAIL"))
