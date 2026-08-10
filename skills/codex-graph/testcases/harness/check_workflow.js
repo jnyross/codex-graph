@@ -7,23 +7,21 @@
 //   --graph <graph.mmd> --script <workflow.js>
 
 const fs = require("node:fs");
+const { parseArgs } = require("node:util");
 const { checkConformance, listCaseIds } = require("./conformance.js");
 
-function parseArgs(argv) {
-  const args = {};
-  for (let index = 0; index < argv.length; index += 2) {
-    const key = argv[index];
-    const value = argv[index + 1];
-    if (!["--case", "--metadata", "--graph", "--script"].includes(key) || !value) {
-      throw new Error(`invalid argument: ${key ?? ""}`);
-    }
-    args[key.slice(2)] = value;
-  }
-  return args;
-}
 
 try {
-  const args = parseArgs(process.argv.slice(2));
+  const { values: args } = parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      case: { type: "string" },
+      metadata: { type: "string" },
+      graph: { type: "string" },
+      script: { type: "string" },
+    },
+    strict: true,
+  });
   if (!args.case || !args.metadata || !args.graph || !args.script) {
     throw new Error(
       `usage: check_workflow.js --case <id> --metadata <metadata.json> ` +

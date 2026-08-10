@@ -19,14 +19,9 @@ function executableSource(structure, trailer = "") {
   ].join("\n");
 }
 
-function executableStructure(source) {
-  return JSON.parse(
-    source.match(/const workflowStructure = ([\s\S]*?);\nif \(/)[1],
-  );
-}
 
 
-function localize(binding) {
+function buildConformingFixture(binding) {
   const roleMap = Object.fromEntries(
     binding.contract.role_instances.map(({ role }, index) => [role, `L${index + 1}`]),
   );
@@ -39,7 +34,7 @@ function localize(binding) {
       for (const role of assertion.roles) prompts[role] += `${assertion.value}\n`;
     }
   }
-  const structure = {
+  const workflowStructure = {
     nodes: binding.contract.role_instances.map(({ role, kind }) => ({
       id: local(role),
       role,
@@ -70,8 +65,8 @@ function localize(binding) {
   };
   const graph = [
     "flowchart TD",
-    ...structure.nodes.map(({ id, role }) => `  ${id}[${role}]`),
-    ...structure.edges.map(
+    ...workflowStructure.nodes.map(({ id, role }) => `  ${id}[${role}]`),
+    ...workflowStructure.edges.map(
       ({ from, to, outcome }) =>
         `  ${from} -->${outcome === undefined ? "" : `|${outcome}|`} ${to}`,
     ),
@@ -84,19 +79,20 @@ function localize(binding) {
     proof_scope: OFFLINE_SCOPE,
     role_map: roleMap,
     structure: {
-      nodes: structure.nodes.map(({ prompt, ...node }) => node),
-      edges: structure.edges,
-      concurrency: structure.concurrency,
-      gates: structure.gates,
-      repair_edges: structure.repair_edges,
-      terminal_paths: structure.terminal_paths,
-      collection: structure.collection,
+      nodes: workflowStructure.nodes.map(({ prompt, ...node }) => node),
+      edges: workflowStructure.edges,
+      concurrency: workflowStructure.concurrency,
+      gates: workflowStructure.gates,
+      repair_edges: workflowStructure.repair_edges,
+      terminal_paths: workflowStructure.terminal_paths,
+      collection: workflowStructure.collection,
     },
   };
   const artifacts = {
     metadata,
     graph,
-    executable: executableSource(structure),
+    executable: executableSource(workflowStructure),
+    workflowStructure,
   };
   metadata.artifact_digest = calculateArtifactDigest({
     metadata,
@@ -121,6 +117,7 @@ function failedCriterion(verdict, id) {
   assert.equal(criterion.ok, false);
   assert.ok(criterion.locators.length > 0);
   assert.ok(criterion.unmatched_facts.length > 0);
+  return criterion;
 }
 
 test("all six cases resolve and conform at one structural seam", () => {
@@ -141,7 +138,7 @@ test("all six cases resolve and conform at one structural seam", () => {
     assert.match(binding.canonical_goal_digest, /^[a-f0-9]{64}$/);
     assert.match(binding.contract_digest, /^[a-f0-9]{64}$/);
 
-    const verdict = checkConformance({ case_id: caseId, artifacts: localize(binding) });
+    const verdict = checkConformance({ case_id: caseId, artifacts: buildConformingFixture(binding) });
     assert.equal(verdict.ok, true, `${caseId}: ${JSON.stringify(verdict.criteria.filter(({ ok }) => !ok))}`);
     assert.equal(verdict.scope, OFFLINE_SCOPE);
     assert.deepEqual(verdict.unmatched_facts, []);
@@ -153,9 +150,16 @@ test("all six cases resolve and conform at one structural seam", () => {
   }
 });
 
+test("contract normalization has a fixed locale-independent digest", () => {
+  assert.equal(
+    resolveCase({ case_id: "adversarial-dual-validation" }).contract_digest,
+    "f807539b74b55ef786e2ac3e0be549032aecccfaeaf09876a68353e0a527fdbd",
+  );
+});
+
 test("binding failures stop before structural comparison at stable criteria", () => {
   const first = resolveCase({ case_id: "atomic-screen-fanout" });
-  const artifacts = localize(first);
+  const artifacts = buildConformingFixture(first);
 
   failedCriterion(
     checkConformance({ case_id: "slice-generators-join", artifacts }),
@@ -164,6 +168,11 @@ test("binding failures stop before structural comparison at stable criteria", ()
   failedCriterion(
     checkConformance({ case_id: first.case_id, goal: "custom goal", artifacts }),
     "binding:custom-goal",
+  );
+  failedCriterion(checkConformance({ artifacts }), "binding:case");
+  failedCriterion(
+    checkConformance({ case_id: "not-a-real-case", artifacts }),
+    "binding:case",
   );
 
   const changedContractDigest = structuredClone(artifacts);
@@ -186,7 +195,7 @@ test("binding failures stop before structural comparison at stable criteria", ()
 
 test("missing duplicate unknown and ambiguous roles fail cardinality", () => {
   const binding = resolveCase({ case_id: "atomic-screen-fanout" });
-  const base = localize(binding);
+  const base = buildConformingFixture(binding);
   const roles = Object.keys(base.metadata.role_map);
 
   const missing = structuredClone(base);
@@ -214,7 +223,7 @@ test("missing duplicate unknown and ambiguous roles fail cardinality", () => {
   );
 
   const ambiguous = structuredClone(base);
-  const structure = executableStructure(ambiguous.executable);
+  const structure = structuredClone(ambiguous.workflowStructure);
   structure.nodes.push({ ...structure.nodes[0], id: "LX" });
   ambiguous.executable = executableSource(structure);
   refreshDigest(ambiguous);
@@ -226,7 +235,7 @@ test("missing duplicate unknown and ambiguous roles fail cardinality", () => {
 
 test("artifact identity covers executable source outside the structure", () => {
   const binding = resolveCase({ case_id: "atomic-screen-fanout" });
-  const artifacts = localize(binding);
+  const artifacts = buildConformingFixture(binding);
   artifacts.executable += "\nawait unexpectedMutation();";
 
   failedCriterion(
@@ -234,26 +243,75 @@ test("artifact identity covers executable source outside the structure", () => {
     "binding:artifact-digest",
   );
 });
-test("the executable runs the same exported structure", () => {
+test("only one intended top-level workflow binding receives credit", () => {
   const binding = resolveCase({ case_id: "atomic-screen-fanout" });
-  const artifacts = localize(binding);
-  artifacts.executable = artifacts.executable.replace(
-    "runWorkflow(workflowStructure)",
-    "runWorkflow(otherStructure)",
-  );
-  refreshDigest(artifacts);
+  const mutations = [
+    ["wrong structure", (source) => source.replace(
+      "runWorkflow(workflowStructure)",
+      "runWorkflow(otherStructure)",
+    )],
+    ["unawaited call", (source) => source.replace(
+      "await runWorkflow(workflowStructure);",
+      "runWorkflow(workflowStructure);",
+    )],
+    ["dead nested call", (source) => source.replace(
+      "await runWorkflow(workflowStructure);",
+      "function deadPath() { return runWorkflow(workflowStructure); }",
+    )],
+    ["shadowed call", (source) =>
+      `const runWorkflow = () => {};\n${source}`],
+    ["nested declaration", (source) => `{\n${source}\n}`],
+    ["unguarded export", (source) => source.replace(
+      'if (typeof module !== "undefined") module.exports = workflowStructure;',
+      "module.exports = workflowStructure;",
+    )],
+    ["dead export", (source) => source.replace(
+      'if (typeof module !== "undefined") module.exports = workflowStructure;',
+      "if (false) module.exports = workflowStructure;",
+    )],
+    ["extra export", (source) =>
+      `${source}\nmodule.exports = workflowStructure;`],
+    ["duplicate call", (source) =>
+      `${source}\nawait runWorkflow(workflowStructure);`],
+  ];
 
-  failedCriterion(
-    checkConformance({ case_id: binding.case_id, artifacts }),
-    "structure:parse",
+  for (const [name, mutate] of mutations) {
+    const artifacts = buildConformingFixture(binding);
+    artifacts.executable = mutate(artifacts.executable);
+    refreshDigest(artifacts);
+    const criterion = failedCriterion(
+      checkConformance({ case_id: binding.case_id, artifacts }),
+      "structure:parse",
+    );
+    assert.match(criterion.unmatched_facts[0], /top-level workflow binding/, name);
+  }
+});
+test("both Mermaid outcome label forms preserve terminal facts", () => {
+  const binding = resolveCase({ case_id: "nonbinding-synthesis-gate" });
+  const pipeLabeled = buildConformingFixture(binding);
+  assert.equal(
+    checkConformance({ case_id: binding.case_id, artifacts: pipeLabeled }).ok,
+    true,
+  );
+
+  const inlineLabeled = buildConformingFixture(binding);
+  inlineLabeled.graph = inlineLabeled.graph.replace(
+    /-->\|([^|]+)\|/g,
+    "-- $1 -->",
+  );
+  refreshDigest(inlineLabeled);
+  assert.equal(
+    checkConformance({ case_id: binding.case_id, artifacts: inlineLabeled }).ok,
+    true,
   );
 });
 
 
+
 test("structural contradictions and lexical decoys receive no credit", () => {
   const binding = resolveCase({ case_id: "atomic-screen-fanout" });
-  const artifacts = localize(binding);
-  const structure = executableStructure(artifacts.executable);
+  const artifacts = buildConformingFixture(binding);
+  const structure = structuredClone(artifacts.workflowStructure);
   const removed = structure.edges.pop();
   artifacts.executable = executableSource(
     structure,
@@ -269,17 +327,19 @@ test("structural contradictions and lexical decoys receive no credit", () => {
 test("each structural proof fact rejects one contradictory mutation", () => {
   const binding = resolveCase({ case_id: "nonbinding-synthesis-gate" });
   const mutations = [
-    ["role", (structure) => { structure.nodes[0].kind = "writer"; }],
+    ["kind", (structure) => { structure.nodes[0].kind = "writer"; }],
     ["environment", (structure) => { structure.nodes[0].environment = "worktree"; }],
     ["concurrency", (structure) => { structure.concurrency[0].pop(); }],
     ["gate", (structure) => { structure.gates[0].outcomes = ["pass"]; }],
     ["repair edge", (structure) => { structure.repair_edges.pop(); }],
     ["terminal path", (structure) => { structure.terminal_paths.pop(); }],
   ];
-
+  for (const key of ["concurrency", "gates", "repair_edges", "terminal_paths"]) {
+    assert.ok(binding.contract[key].length > 0, `fixture needs ${key}`);
+  }
   for (const [name, mutate] of mutations) {
-    const artifacts = localize(binding);
-    const structure = executableStructure(artifacts.executable);
+    const artifacts = buildConformingFixture(binding);
+    const structure = structuredClone(artifacts.workflowStructure);
     mutate(structure);
     artifacts.executable = executableSource(structure);
     refreshDigest(artifacts);
@@ -290,6 +350,87 @@ test("each structural proof fact rejects one contradictory mutation", () => {
 });
 
 
+
+test("malformed structure containers and entries fail at structure shape", () => {
+  const binding = resolveCase({ case_id: "nonbinding-synthesis-gate" });
+  const cases = [
+    ["nodes container", (value) => { value.nodes = {}; }, "structure.nodes must be an array"],
+    ["node entry", (value) => { value.nodes[0] = null; }, "structure.nodes[0] must be an object"],
+    ["edges container", (value) => { value.edges = null; }, "structure.edges must be an array"],
+    ["concurrency container", (value) => { value.concurrency = {}; }, "structure.concurrency must be an array"],
+    ["concurrency entry", (value) => { value.concurrency[0] = "not-an-array"; }, "structure.concurrency[0] must be an array"],
+    ["gates container", (value) => { value.gates = {}; }, "structure.gates must be an array"],
+    ["gate entry", (value) => { value.gates[0] = null; }, "structure.gates[0] must be an object"],
+    ["repair container", (value) => { value.repair_edges = {}; }, "structure.repair_edges must be an array"],
+    ["repair entry", (value) => { value.repair_edges[0] = null; }, "structure.repair_edges[0] must be an object"],
+    ["terminal container", (value) => { value.terminal_paths = {}; }, "structure.terminal_paths must be an array"],
+    ["terminal entry", (value) => { value.terminal_paths[0] = null; }, "structure.terminal_paths[0] must be an object"],
+    ["collection", (value) => { value.collection = []; }, "structure.collection must be an object"],
+  ];
+
+  for (const [name, mutate, fact] of cases) {
+    const artifacts = buildConformingFixture(binding);
+    const structure = structuredClone(artifacts.workflowStructure);
+    mutate(structure);
+    artifacts.executable = executableSource(structure);
+    refreshDigest(artifacts);
+    const criterion = failedCriterion(
+      checkConformance({ case_id: binding.case_id, artifacts }),
+      "structure:shape",
+    );
+    assert.deepEqual(criterion.unmatched_facts, [fact], name);
+  }
+});
+
+test("isomorphism failures report normalized fact-level differences", () => {
+  const binding = resolveCase({ case_id: "atomic-screen-fanout" });
+  const artifacts = buildConformingFixture(binding);
+  const structure = structuredClone(artifacts.workflowStructure);
+  structure.nodes[0].environment = "worktree";
+  artifacts.executable = executableSource(structure);
+  refreshDigest(artifacts);
+
+  const criterion = failedCriterion(
+    checkConformance({ case_id: binding.case_id, artifacts }),
+    "structure:executable",
+  );
+  assert.deepEqual(criterion.unmatched_facts, [...criterion.unmatched_facts].sort());
+  assert.ok(criterion.unmatched_facts.some((fact) => fact.startsWith("missing node:")));
+  assert.ok(criterion.unmatched_facts.some((fact) => fact.startsWith("unexpected node:")));
+  assert.ok(criterion.locators.some((locator) => locator.startsWith("contract.")));
+  assert.ok(criterion.locators.some((locator) => locator.startsWith("workflow.js:workflowStructure.")));
+  assert.doesNotMatch(criterion.unmatched_facts.join("\\n"), /contradicts resolved contract/);
+});
+
+test("unknown structure keys and prototype keys fail closed", () => {
+  const binding = resolveCase({ case_id: "atomic-screen-fanout" });
+  const cases = [
+    ["structure key", (artifacts, structure) => { structure.extra = true; }],
+    ["node key", (artifacts, structure) => { structure.nodes[0].extra = true; }],
+    ["metadata key", (artifacts) => { artifacts.metadata.structure.extra = true; }],
+    ["prototype key", (artifacts) => {
+      artifacts.executable = artifacts.executable.replace(
+        "const workflowStructure = {",
+        'const workflowStructure = {"__proto__": {},',
+      );
+    }],
+  ];
+
+  for (const [name, mutate] of cases) {
+    const artifacts = buildConformingFixture(binding);
+    const structure = structuredClone(artifacts.workflowStructure);
+    mutate(artifacts, structure);
+    if (!name.includes("metadata") && !name.includes("prototype")) {
+      artifacts.executable = executableSource(structure);
+    }
+    refreshDigest(artifacts);
+    const criterion = failedCriterion(
+      checkConformance({ case_id: binding.case_id, artifacts }),
+      "structure:shape",
+    );
+    assert.match(criterion.unmatched_facts[0], /unknown|__proto__/, name);
+  }
+});
 test("literal checks inspect only their contracted parsed field", () => {
   const binding = resolveCase({ case_id: "atomic-screen-fanout" });
   const assertion = binding.contract.assertions.find(
@@ -297,7 +438,7 @@ test("literal checks inspect only their contracted parsed field", () => {
   );
   assert.ok(assertion);
 
-  const commentOnly = localize(binding);
+  const commentOnly = buildConformingFixture(binding);
   commentOnly.executable += `\n// ${assertion.value}`;
   refreshDigest(commentOnly);
   assert.equal(
@@ -305,8 +446,8 @@ test("literal checks inspect only their contracted parsed field", () => {
     true,
   );
 
-  const parsedField = localize(binding);
-  const structure = executableStructure(parsedField.executable);
+  const parsedField = buildConformingFixture(binding);
+  const structure = structuredClone(parsedField.workflowStructure);
   structure.nodes.find(({ role }) => role === assertion.roles[0]).prompt = assertion.value;
   parsedField.executable = executableSource(structure);
   refreshDigest(parsedField);
@@ -314,11 +455,30 @@ test("literal checks inspect only their contracted parsed field", () => {
     checkConformance({ case_id: binding.case_id, artifacts: parsedField }),
     assertion.id,
   );
+
+  for (const [name, prompt] of [["missing", undefined], ["non-string", 42]]) {
+    const artifacts = buildConformingFixture(binding);
+    const changed = structuredClone(artifacts.workflowStructure);
+    const node = changed.nodes.find(({ role }) => role === assertion.roles[0]);
+    if (prompt === undefined) delete node.prompt;
+    else node.prompt = prompt;
+    artifacts.executable = executableSource(changed);
+    refreshDigest(artifacts);
+    const criterion = failedCriterion(
+      checkConformance({ case_id: binding.case_id, artifacts }),
+      assertion.id,
+    );
+    assert.match(
+      criterion.unmatched_facts.join("\n"),
+      /must be an own string/,
+      name,
+    );
+  }
 });
 
 test("offline verdicts reject proof-category leaks", () => {
   const binding = resolveCase({ case_id: "atomic-screen-fanout" });
-  const artifacts = localize(binding);
+  const artifacts = buildConformingFixture(binding);
   artifacts.metadata.proof_scope = "runtime-proof-and-execution-authority";
   refreshDigest(artifacts);
 
@@ -326,7 +486,7 @@ test("offline verdicts reject proof-category leaks", () => {
     checkConformance({ case_id: binding.case_id, artifacts }),
     "scope:conformance-only",
   );
-  const unknownClaim = localize(binding);
+  const unknownClaim = buildConformingFixture(binding);
   unknownClaim.metadata.runtime_proof = true;
   refreshDigest(unknownClaim);
   failedCriterion(

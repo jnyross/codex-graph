@@ -23,7 +23,13 @@ The generated Mermaid graph and executable must use the mapped graph-local ident
 
 ```js
 const workflowStructure = {
-  nodes: [],
+  nodes: [{
+    id: "L1",
+    role: "contract_owner",
+    kind: "contract",
+    environment: "local",
+    prompt: "Freeze the resolved case contract.",
+  }],
   edges: [],
   concurrency: [],
   gates: [],

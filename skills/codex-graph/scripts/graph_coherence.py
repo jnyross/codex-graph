@@ -60,9 +60,9 @@ _LABEL = r"(?:(?![A-Za-z0-9_]+[\[({])[^|>\n])*?"
 _LINK_RE = re.compile(
     r"""\s*(?:[ox](?=[-=.])|<)?\s*
     (?:
-        --(?!-)""" + _LABEL + r"""-{2,}[>xo]?
-      | ==(?!=)""" + _LABEL + r"""={2,}[>xo]?
-      | -\.""" + _LABEL + r"""\.-+[>xo]?
+        --(?!-)(?P<dash_label>""" + _LABEL + r""")-{2,}[>xo]?
+      | ==(?!=)(?P<equals_label>""" + _LABEL + r""")={2,}[>xo]?
+      | -\.(?P<dotted_label>""" + _LABEL + r""")\.-+[>xo]?
       | -{2,}[>xo]?
       | ={2,}[>xo]?
       | -\.-+[>xo]?
@@ -91,22 +91,19 @@ class Graph:
         self,
         nodes: List[str],
         labels: Dict[str, str],
-        edges: List[Tuple[str, str]],
+        edge_outcomes: List[Tuple[str, str, Optional[str]]],
         unparsed: Optional[List[str]] = None,
-        edge_outcomes: Optional[List[Tuple[str, str, Optional[str]]]] = None,
     ):
         self.nodes = nodes
         self.labels = labels
-        self.edges = edges
+        self.edge_outcomes = edge_outcomes
+        self.edges = [(source, target) for source, target, _ in edge_outcomes]
         self.unparsed = unparsed or []
-        self.edge_outcomes = edge_outcomes or [
-            (source, target, None) for source, target in edges
-        ]
         self.outdeg = {n: 0 for n in nodes}
         self.indeg = {n: 0 for n in nodes}
         self.children: Dict[str, List[str]] = {n: [] for n in nodes}
         self.parents: Dict[str, List[str]] = {n: [] for n in nodes}
-        for a, b in edges:
+        for a, b in self.edges:
             if a in self.outdeg:
                 self.outdeg[a] += 1
             if b in self.indeg:
@@ -216,7 +213,6 @@ def _parse_statement(
     stmt: str,
     nodes: List[str],
     labels: Dict[str, str],
-    edges: List[Tuple[str, str]],
     unparsed: List[str],
     edge_outcomes: List[Tuple[str, str, Optional[str]]],
 ) -> List[str]:
@@ -227,7 +223,6 @@ def _parse_statement(
     """
     seen: List[str] = []
     node_count = len(nodes)
-    edge_count = len(edges)
     outcome_count = len(edge_outcomes)
     label_snapshot = dict(labels)
 
@@ -240,7 +235,6 @@ def _parse_statement(
         # nodes out of label words and cascade fake undefined/dead-end reports on
         # top of the one real complaint.
         del nodes[node_count:]
-        del edges[edge_count:]
         del edge_outcomes[outcome_count:]
         labels.clear()
         labels.update(label_snapshot)
@@ -305,7 +299,6 @@ def _parse_statement(
                 for pair in pairs:
                     if pair not in emitted:
                         emitted.add(pair)
-                        edges.append(pair)
                         edge_outcomes.append((pair[0], pair[1], outcome))
         previous = group
         link = _LINK_RE.match(stmt, index)
@@ -313,7 +306,16 @@ def _parse_statement(
             return bail(index)
         direction = _link_direction(link.group(0))
         index = link.end()
-        outcome = None
+        outcome = next(
+            (
+                value.strip()
+                for value in link.group(
+                    "dash_label", "equals_label", "dotted_label"
+                )
+                if value is not None
+            ),
+            None,
+        )
         if index < length and stmt[index] == "|":
             close = stmt.find("|", index + 1)
             if close == -1:
@@ -324,7 +326,6 @@ def _parse_statement(
 
 
 def _expand_container_edges(
-    edges: List[Tuple[str, str]],
     members: Dict[str, List[str]],
     edge_outcomes: List[Tuple[str, str, Optional[str]]],
 ) -> None:
@@ -343,36 +344,37 @@ def _expand_container_edges(
             ),
             None,
         )
+
     for container, group in members.items():
         inside = set(group)
         if not inside:
             continue
-        internal = [(a, b) for a, b in edges if a in inside and b in inside]
+        current = {(source, target) for source, target, _ in edge_outcomes}
+        internal = [(a, b) for a, b in current if a in inside and b in inside]
         entries = [m for m in group if not any(b == m for _, b in internal)]
         exits = [m for m in group if not any(a == m for a, _ in internal)]
-        incoming = [a for a, b in list(edges) if b == container and a not in inside]
-        outgoing = [b for a, b in list(edges) if a == container and b not in inside]
+        incoming = [a for a, b in current if b == container and a not in inside]
+        outgoing = [b for a, b in current if a == container and b not in inside]
         for source in incoming:
             for entry in entries:
-                if (source, entry) not in edges:
-                    edges.append((source, entry))
+                if (source, entry) not in current:
                     edge_outcomes.append(
                         (source, entry, outcome_for(source, container))
                     )
+                    current.add((source, entry))
         for target in outgoing:
             for exit_node in exits:
-                if (exit_node, target) not in edges:
-                    edges.append((exit_node, target))
+                if (exit_node, target) not in current:
                     edge_outcomes.append(
                         (exit_node, target, outcome_for(container, target))
                     )
+                    current.add((exit_node, target))
 
 
 def parse_flowchart(body: str) -> Graph:
     nodes: List[str] = []
     labels: Dict[str, str] = {}
     edge_outcomes: List[Tuple[str, str, Optional[str]]] = []
-    edges: List[Tuple[str, str]] = []
     subgraph_ids: Set[str] = set()
     members: Dict[str, List[str]] = {}
     open_containers: List[str] = []
@@ -399,7 +401,7 @@ def parse_flowchart(body: str) -> Graph:
                 open_containers.pop()
             continue
         mentioned = _parse_statement(
-            line, nodes, labels, edges, unparsed, edge_outcomes
+            line, nodes, labels, unparsed, edge_outcomes
         )
         # A node may be declared before its subgraph and only listed by id
         # inside it, so every id a statement mentions counts as a member.
@@ -407,12 +409,16 @@ def parse_flowchart(body: str) -> Graph:
             for node_id in mentioned:
                 if node_id not in members[container_id]:
                     members[container_id].append(node_id)
-    _expand_container_edges(edges, members, edge_outcomes)
-    endpoints = {n for edge in edges for n in edge}
+    _expand_container_edges(members, edge_outcomes)
+    endpoints = {
+        node
+        for source, target, _ in edge_outcomes
+        for node in (source, target)
+    }
     nodes = [n for n in nodes if n not in subgraph_ids or n in endpoints]
     nodes.extend(sorted(s for s in subgraph_ids if s in endpoints and s not in nodes))
     # Mermaid allows a subgraph id as an edge endpoint; then it is a real node.
-    return Graph(nodes, labels, edges, unparsed, edge_outcomes)
+    return Graph(nodes, labels, edge_outcomes, unparsed)
 
 
 def check_graph(g: Graph) -> List[str]:
@@ -484,7 +490,7 @@ def _is_statement_like(line: str) -> bool:
     if head in _KEYWORDS:
         return True
     residue: List[str] = []
-    _parse_statement(stripped, [], {}, [], residue, [])
+    _parse_statement(stripped, [], {}, residue, [])
     return not residue
 
 
