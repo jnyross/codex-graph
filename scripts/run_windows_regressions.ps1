@@ -6,6 +6,9 @@ python -m unittest skills/codex-graph/scripts/test_validate_skill.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 
+python skills/codex-graph/scripts/test_root_workflow.py
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 python skills/codex-graph/scripts/graph_coherence.py --selfcheck
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

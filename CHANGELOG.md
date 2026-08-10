@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## [0.5.7] - 2026-08-10
+
+- WF-03: enforce authority-safe root admission (#50)
+
 ## [0.5.6] - 2026-08-09
 
 - fix: require configured await-call helper names to be standalone targets instead of member/property or identifier-suffix matches, and align the slice-generators testcase with the canonical `N3` integration-node vocabulary
