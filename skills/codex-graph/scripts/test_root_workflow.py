@@ -91,6 +91,15 @@ class RootWorkflowTests(unittest.TestCase):
         fixtures["missing worker confinement"] = metadata()
         fixtures["missing worker confinement"]["authority_preflight"]["workers"] = []
 
+        fixtures["read-only L4 without confinement"] = metadata()
+        read_only_l4 = fixtures["read-only L4 without confinement"][
+            "authority_preflight"
+        ]
+        read_only_l4["reachable_mutations"] = []
+        read_only_l4["workers"] = []
+        read_only_l4["generic_trigger_state"] = {"T4-SHARDED-RECOVERY": "fired"}
+        read_only_l4["generic_topology"] = "L4"
+
         fixtures["malformed trigger value"] = metadata()
         fixtures["malformed trigger value"]["authority_preflight"][
             "generic_trigger_state"
@@ -162,6 +171,66 @@ class RootWorkflowTests(unittest.TestCase):
             "effect:already-observed-at-runtime", malformed["observed_effects"]
         )
 
+    def test_mixed_validity_evidence_and_effect_lists_retain_valid_facts(self):
+        mixed = metadata()
+        mixed["authority_preflight"]["evidence"] = [
+            "evidence:preflight",
+            None,
+            "evidence:second",
+        ]
+        mixed["observed_effects"] = [
+            "effect:read-complete",
+            3,
+            "effect:second",
+        ]
+        result = evaluate_root_workflow(
+            mixed,
+            [
+                {
+                    "type": "decision_loop_discovered",
+                    "path": "runtime choice",
+                    "evidence": [
+                        "evidence:runtime",
+                        {},
+                        "evidence:runtime-second",
+                    ],
+                    "observed_effects": [
+                        "effect:runtime",
+                        "",
+                        "effect:runtime-second",
+                    ],
+                }
+            ],
+        )
+
+        self.assertEqual(result["workflow_state"], {"state": "blocked", "final": True})
+        self.assertEqual(
+            result["retained_evidence"],
+            [
+                "evidence:preflight",
+                "evidence:second",
+                "evidence:runtime",
+                "evidence:runtime-second",
+            ],
+        )
+        self.assertEqual(
+            result["observed_effects"],
+            [
+                "effect:read-complete",
+                "effect:second",
+                "effect:runtime",
+                "effect:runtime-second",
+            ],
+        )
+        self.assertTrue(
+            {
+                "malformed_authority_evidence",
+                "malformed_observed_effects",
+                "malformed_runtime_evidence",
+                "malformed_runtime_effects",
+            }.issubset(result["authority_preflight"]["reasons"])
+        )
+
     def test_worker_discovered_mutation_stops_before_action_and_requires_reproof(self):
         discovery = {
             "type": "worker_mutation_discovered",
@@ -196,6 +265,26 @@ class RootWorkflowTests(unittest.TestCase):
         self.assertTrue(reproved["execution_permission"]["delegated_work"])
         self.assertFalse(reproved["execution_permission"]["delegated_mutation"])
         self.assertIn("evidence:preflight", reproved["retained_evidence"])
+
+        parallel_metadata = metadata()
+        parallel_metadata["authority_preflight"]["workers"].append(worker("reviewer"))
+        writer_reproof = copy.deepcopy(reproved_discovery)
+        reviewer_reproof = {
+            "type": "worker_mutation_discovered",
+            "worker_role": "reviewer",
+            "mutation": {"identity": "publish-review", "owner": "root"},
+            "revision": 8,
+            "worker_confinement": worker("reviewer"),
+        }
+        parallel = evaluate_root_workflow(
+            parallel_metadata, [writer_reproof, reviewer_reproof]
+        )
+        self.assertEqual(parallel["authority_preflight"]["status"], "allow_generation")
+        self.assertEqual(parallel["authority_preflight"]["revision"], 8)
+        self.assertEqual(
+            parallel["execution_permission"]["stopped_workers"], ["writer", "reviewer"]
+        )
+        self.assertTrue(parallel["execution_permission"]["delegated_work"])
 
     def test_process_facts_and_attempt_verdicts_never_become_workflow_success(self):
         process_facts = [

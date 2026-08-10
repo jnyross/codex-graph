@@ -15,12 +15,16 @@ def _string_list(value: object) -> bool:
 
 
 def _retain(target: list[str], value: object) -> bool:
-    if not _string_list(value):
+    if not isinstance(value, list):
         return False
+    valid = True
     for item in value:
+        if not isinstance(item, str) or not item:
+            valid = False
+            continue
         if item not in target:
             target.append(item)
-    return True
+    return valid
 
 
 def _worker_reasons(worker: object, prefix: str = "worker") -> list[str]:
@@ -113,6 +117,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
 
     reasons: list[str] = []
     revision = preflight.get("revision")
+    preflight_revision = revision
     if not isinstance(revision, int) or isinstance(revision, bool):
         reasons.append("malformed_authority_preflight_revision")
     elif revision != metadata.get("revision"):
@@ -183,7 +188,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
     if not isinstance(generic_topology, str) or generic_topology not in _TOPOLOGIES:
         reasons.append("malformed_generic_topology")
         generic_topology = "L0"
-    elif mutations and generic_topology != "L0" and not workers:
+    elif generic_topology != "L0" and not workers:
         reasons.append("unproved_worker_confinement")
 
     if not _retain(retained_evidence, preflight.get("evidence")):
@@ -258,8 +263,9 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
             if (
                 not isinstance(event_revision, int)
                 or isinstance(event_revision, bool)
-                or not isinstance(revision, int)
-                or event_revision <= revision
+                or not isinstance(preflight_revision, int)
+                or isinstance(preflight_revision, bool)
+                or event_revision <= preflight_revision
             ):
                 reproof_reasons.append("stale_worker_confinement_reproof")
             if reproof_reasons:
@@ -276,7 +282,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
                     for item in workers
                 ):
                     workers.append(reproved_worker)
-                revision = event_revision
+                revision = max(revision, event_revision)
         else:
             reasons.append("unknown_runtime_event")
 
