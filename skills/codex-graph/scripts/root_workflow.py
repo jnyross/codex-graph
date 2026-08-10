@@ -349,7 +349,7 @@ def _blocked_result(
     stopped_workers: list[str],
     revision: object = None,
     review_gate: dict | None = None,
-    review_checkpoint: dict | None = None,
+    review_checkpoint: object = None,
 ) -> dict:
     preflight = {
         "revision": revision,
@@ -384,7 +384,12 @@ def evaluate_root_workflow(
     """Evaluate authority admission without performing or accepting any work."""
     if not isinstance(metadata, dict):
         return _blocked_result(
-            ["malformed_workflow_metadata"], [], [], [], revision=None
+            ["malformed_workflow_metadata"],
+            [],
+            [],
+            [],
+            revision=None,
+            review_checkpoint=review_checkpoint,
         )
 
     retained_evidence: list[str] = []
@@ -398,6 +403,7 @@ def evaluate_root_workflow(
             observed_effects,
             [],
             revision=metadata.get("revision"),
+            review_checkpoint=review_checkpoint,
         )
     if not isinstance(preflight, dict):
         return _blocked_result(
@@ -406,6 +412,7 @@ def evaluate_root_workflow(
             observed_effects,
             [],
             revision=metadata.get("revision"),
+            review_checkpoint=review_checkpoint,
         )
 
     reasons: list[str] = []

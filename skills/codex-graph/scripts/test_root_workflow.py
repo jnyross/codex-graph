@@ -822,5 +822,63 @@ class RootWorkflowTests(unittest.TestCase):
             "repair_limit_exceeded", reset_result["review_gate"]["reasons"]
         )
 
+    def test_early_blocks_preserve_consumed_repair_checkpoint(self):
+        first_revision = metadata()
+        first_revision["design_review"]["independent_review"]["verdict"] = "repair"
+        first_revision["design_review"]["independent_review"]["findings"] = [finding()]
+        consumed_checkpoint = evaluate_root_workflow(first_revision)[
+            "review_checkpoint"
+        ]
+
+        missing_preflight = metadata()
+        del missing_preflight["authority_preflight"]
+        malformed_preflight = metadata()
+        malformed_preflight["authority_preflight"] = "invalid"
+        blocked_inputs = {
+            "malformed_workflow_metadata": "invalid",
+            "missing_authority_preflight": missing_preflight,
+            "malformed_authority_preflight": malformed_preflight,
+        }
+
+        reset = metadata()
+        reset["revision"] = 8
+        reset["authority_preflight"]["revision"] = 8
+        reset["design_digest"] = "sha256:design-8"
+        reset["design_review"] = review(
+            design_digest="sha256:design-8",
+            verdict="repair",
+            repair_count=0,
+        )
+        reset["design_review"]["design_revision"] = 8
+        reset["design_review"]["independent_review"]["identity"] = "review-8"
+        reset_finding = finding()
+        reset_finding["identity"] = "F-2"
+        reset["design_review"]["independent_review"]["findings"] = [reset_finding]
+
+        for reason, blocked_input in blocked_inputs.items():
+            with self.subTest(reason=reason):
+                blocked_result = evaluate_root_workflow(
+                    blocked_input,
+                    review_checkpoint=consumed_checkpoint,
+                )
+                self.assertEqual(
+                    blocked_result["workflow_state"],
+                    {"state": "blocked", "final": True},
+                )
+                self.assertIn(reason, blocked_result["authority_preflight"]["reasons"])
+                self.assertEqual(
+                    blocked_result["review_checkpoint"], consumed_checkpoint
+                )
+
+                persisted_result = evaluate_root_workflow(
+                    copy.deepcopy(reset),
+                    review_checkpoint=blocked_result["review_checkpoint"],
+                )
+                self.assertEqual(persisted_result["review_gate"]["status"], "block")
+                self.assertIn(
+                    "repair_limit_exceeded",
+                    persisted_result["review_gate"]["reasons"],
+                )
+
 if __name__ == "__main__":
     unittest.main()

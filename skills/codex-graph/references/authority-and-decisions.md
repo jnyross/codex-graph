@@ -146,6 +146,8 @@ that returned `repair_required`. Later pass and block results preserve that
 repair origin so resume and correction remain possible. Only a new
 `repair_required` result may establish the origin. Malformed or unknown
 checkpoint state blocks and cannot restore an unused repair allowance.
+Every blocked transition, including malformed workflow or authority-preflight
+input, persists the incoming review checkpoint.
 
 An unresolved must-fix produces a structured blocked diagnostic artifact. It
 also produces a precise parent question bound to the finding and revision.
