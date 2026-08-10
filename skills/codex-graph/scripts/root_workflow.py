@@ -99,6 +99,30 @@ _RETAINED_FACTS = {
     "outcomes",
     "terminal_reason",
 }
+_REPAIR_ALLOWED = {
+    "narrow_read",
+    "continue_complete_cursor_or_range",
+    "authoritative_alias_lookup",
+    "normalize_and_reconcile",
+}
+_MUTATING_REPAIR = {
+    "mutation_retry",
+    "corrective_mutation",
+    "expanded_authority",
+    "undo",
+    "compensate",
+}
+_SECURITY_AXES = {"protected", "unprotected", "uncertain"}
+_PROTECTED_CATEGORIES = {
+    "security_account_control",
+    "identity_official_status",
+    "financial_assets_obligations",
+    "legal_rights_obligations",
+    "health_medical_care",
+    "physical_safety_emergency",
+    "privacy_consent_data_control",
+    "high_impact_eligibility_essential_services",
+}
 _FAMILY_MATRIX = {
     "record_state": {
         "pre": ("resource_id", "version", "state"),
@@ -212,6 +236,60 @@ _FAMILY_MATRIX = {
         "receipt_status": ("accepted", "completed"),
     },
 }
+_EVIDENCE_FIELDS = {
+    "kind",
+    "owner",
+    "authoritative",
+    "alias",
+    "canonical_target_ids",
+    "mutation_id",
+    "target_ids",
+    "aggregate_scope",
+    "fixed_predicate",
+    "required_fields",
+    "capability",
+    "read_locator",
+    "requested_scope",
+    "returned_scope",
+    "relevant_versions",
+    "signals",
+    "recovery_attempts",
+    "no_progress_stop",
+    "outcome",
+    "target_id",
+    "transport_ref",
+    "action",
+    "status",
+    "item_id",
+    "batch_id",
+    "target_state",
+    "transport_proof_ref",
+    "item_axis",
+    "action_axis",
+    "categories",
+    "deterministic_markers",
+    "evidence_locators",
+    "classification_reasons",
+    "uncertainty",
+    "authorization_ref",
+    "authorization_scope_id",
+    "authorization_current",
+    "client_mutation_key",
+    "result_resource_id",
+    "request_id",
+    "scope_before",
+    "scope_after",
+    "progress",
+    "coverage_before",
+    "coverage_after",
+    "eligible",
+    "reason_code",
+    "pre_ref",
+}
+for _family_row in _FAMILY_MATRIX.values():
+    _EVIDENCE_FIELDS.update(_family_row["pre"])
+    _EVIDENCE_FIELDS.update(_family_row["receipt"])
+    _EVIDENCE_FIELDS.update(_family_row["post"])
 
 
 def _present_field(record: object, field: str) -> bool:
@@ -278,6 +356,9 @@ def _transport_complete(
     expected_targets: list[str],
     linked: dict[str, list[str]],
     records: dict,
+    expected_mutation: object = None,
+    expected_scope: object = None,
+    expected_predicate: object = None,
 ) -> bool:
     record = records.get(ref) if isinstance(ref, str) else None
     if (
@@ -285,8 +366,34 @@ def _transport_complete(
         or not isinstance(record, dict)
         or record.get("kind") != "transport_proof"
         or record.get("outcome") != "complete"
+        or not _present_field(record, "mutation_id")
+        or (
+            expected_mutation is not None
+            and record.get("mutation_id") != expected_mutation
+        )
         or not _valid_string_set(record.get("target_ids"))
         or set(record["target_ids"]) != set(expected_targets)
+        or not _present_field(record, "aggregate_scope")
+        or not _present_field(record, "fixed_predicate")
+        or (
+            expected_scope is not None
+            and record.get("aggregate_scope") != expected_scope
+        )
+        or not _valid_string_set(record.get("required_fields"))
+        or (
+            expected_predicate is not None
+            and record.get("fixed_predicate") != expected_predicate
+        )
+        or not record["required_fields"]
+        or not _present_field(record, "read_locator")
+        or not _valid_string_set(record.get("requested_scope"))
+        or set(record["requested_scope"]) != set(expected_targets)
+        or not _valid_string_set(record.get("returned_scope"))
+        or set(record["returned_scope"]) != set(expected_targets)
+        or not isinstance(record.get("relevant_versions"), dict)
+        or record.get("signals") != []
+        or not isinstance(record.get("recovery_attempts"), list)
+        or not _present_field(record, "no_progress_stop")
     ):
         return False
 
@@ -308,6 +415,7 @@ def _transport_complete(
         return (
             len(record["target_ids"]) == 1
             and isinstance(witness, dict)
+            and isinstance(witness.get("kind"), str)
             and witness.get("kind")
             in {
                 "authoritative_object",
@@ -352,6 +460,229 @@ def _complete_ranges(record: object) -> bool:
         cursor = byte_range[1]
     return cursor == length
 
+def _security_gate_allows(
+    security: object,
+    target_id: object,
+    mutation_id: object,
+    action: object,
+    pre_transport_ref: object,
+    decision_ref: object,
+    scope_id: object,
+) -> bool:
+    if not isinstance(security, dict):
+        return False
+    item_axis = security.get("item_axis")
+    action_axis = security.get("action_axis")
+    categories = security.get("categories")
+    partitions = security.get("partition_sets")
+    expiry = security.get("expiry")
+    return (
+        security.get("kind") == "security_gate"
+        and security.get("verdict") == "allow"
+        and all(
+            _present_field(security, field)
+            for field in ("item_id", "batch_id", "target_state")
+        )
+        and security.get("target_id") == target_id
+        and security.get("mutation_id") == mutation_id
+        and security.get("action") == action
+        and security.get("transport_proof_ref") == pre_transport_ref
+        and isinstance(item_axis, str)
+        and item_axis in _SECURITY_AXES
+        and isinstance(action_axis, str)
+        and action_axis in _SECURITY_AXES
+        and item_axis != "uncertain"
+        and action_axis != "uncertain"
+        and _valid_string_set(categories)
+        and set(categories).issubset(_PROTECTED_CATEGORIES)
+        and (
+            (item_axis == action_axis == "unprotected" and not categories)
+            or (
+                "protected" in {item_axis, action_axis}
+                and bool(categories)
+            )
+        )
+        and _valid_string_set(security.get("deterministic_markers"))
+        and _valid_string_set(security.get("evidence_locators"))
+        and bool(security["evidence_locators"])
+        and _valid_string_set(security.get("classification_reasons"))
+        and bool(security["classification_reasons"])
+        and security.get("uncertainty") is False
+        and isinstance(expiry, dict)
+        and isinstance(expiry.get("expired"), bool)
+        and expiry.get("classification_preserved") is True
+        and isinstance(expiry.get("material_usable"), bool)
+        and security.get("authorization_current") is True
+        and security.get("authorization_ref") == decision_ref
+        and security.get("authorization_scope_id") == scope_id
+        and isinstance(partitions, dict)
+        and _valid_string_set(partitions.get("allowed"))
+        and partitions["allowed"] == [target_id]
+        and partitions.get("blocked") == []
+    )
+
+
+def _repair_valid(
+    repair: object, linked: dict[str, list[str]], records: dict
+) -> bool:
+    if not isinstance(repair, dict):
+        return False
+    allowed = repair.get("allowed")
+    forbidden = repair.get("forbidden")
+    attempts = repair.get("attempts")
+    if (
+        not _valid_string_set(allowed)
+        or not set(allowed).issubset(_REPAIR_ALLOWED)
+        or set(allowed) & _MUTATING_REPAIR
+        or not _valid_string_set(forbidden)
+        or not {"mutation_retry", "corrective_mutation"}.issubset(forbidden)
+        or not isinstance(attempts, list)
+    ):
+        return False
+    request_ids = set()
+    requests = set()
+    evidence_refs = set()
+    previous_coverage = None
+    for attempt in attempts:
+        coverage_before = (
+            attempt.get("coverage_before") if isinstance(attempt, dict) else None
+        )
+        coverage_after = (
+            attempt.get("coverage_after") if isinstance(attempt, dict) else None
+        )
+        request_id = attempt.get("request_id") if isinstance(attempt, dict) else None
+        evidence_ref = (
+            attempt.get("evidence_ref") if isinstance(attempt, dict) else None
+        )
+        if (
+            not isinstance(attempt, dict)
+            or attempt.get("action") not in allowed
+            or not _valid_string_set(attempt.get("scope_before"))
+            or not _valid_string_set(attempt.get("scope_after"))
+            or not isinstance(request_id, str)
+            or not request_id
+            or request_id in request_ids
+            or not isinstance(evidence_ref, str)
+            or not any(evidence_ref in refs for refs in linked.values())
+            or not isinstance(records.get(evidence_ref), dict)
+            or records[evidence_ref].get("owner") != "root"
+            or not (
+                records[evidence_ref].get("authoritative") is True
+                or records[evidence_ref].get("kind") == "transport_proof"
+            )
+            or not evidence_ref
+            or evidence_ref in evidence_refs
+            or not isinstance(coverage_before, int)
+            or isinstance(coverage_before, bool)
+            or not isinstance(coverage_after, int)
+            or isinstance(coverage_after, bool)
+            or coverage_before < 0
+            or coverage_after <= coverage_before
+            or records[evidence_ref].get("request_id") != request_id
+            or records[evidence_ref].get("action") != attempt.get("action")
+            or records[evidence_ref].get("scope_before")
+            != attempt.get("scope_before")
+            or records[evidence_ref].get("scope_after") != attempt.get("scope_after")
+            or records[evidence_ref].get("progress") != attempt.get("progress")
+            or records[evidence_ref].get("coverage_before") != coverage_before
+            or records[evidence_ref].get("coverage_after") != coverage_after
+            or (
+                previous_coverage is not None
+                and coverage_before != previous_coverage
+            )
+        ):
+            return False
+        before = set(attempt["scope_before"])
+        after = set(attempt["scope_after"])
+        request = (attempt["action"], tuple(attempt["scope_after"]))
+        if request in requests:
+            return False
+        if attempt.get("progress") == "scope_narrowed":
+            if not after < before:
+                return False
+        elif attempt.get("progress") == "coverage_advanced":
+            if not after.issubset(before):
+                return False
+        else:
+            return False
+        request_ids.add(request_id)
+        requests.add(request)
+        evidence_refs.add(evidence_ref)
+        previous_coverage = coverage_after
+    return True
+
+
+def _sanitize_attempts(attempts: object) -> list[dict]:
+    if not isinstance(attempts, list):
+        return []
+    return [
+        {
+            field: attempt[field]
+            for field in (
+                "action",
+                "scope_before",
+                "scope_after",
+                "progress",
+                "evidence_ref",
+                "request_id",
+                "coverage_before",
+                "coverage_after",
+            )
+            if isinstance(attempt, dict) and field in attempt
+        }
+        for attempt in attempts
+        if isinstance(attempt, dict)
+    ]
+
+
+def _sanitize_evidence_summaries(
+    records: dict, linked: dict[str, list[str]]
+) -> dict[str, dict]:
+    refs = []
+    for category_refs in linked.values():
+        for ref in category_refs:
+            if ref not in refs:
+                refs.append(ref)
+    summaries = {}
+    for ref in refs:
+        record = records.get(ref)
+        if not isinstance(record, dict):
+            continue
+        summary = {
+            field: record[field]
+            for field in _EVIDENCE_FIELDS
+            if field in record
+        }
+        witness = record.get("witness")
+        if isinstance(witness, dict):
+            summary["witness"] = _copy_fields(
+                witness,
+                (
+                    "kind",
+                    "value",
+                    "authoritative_total",
+                    "unique_count",
+                    "terminal_condition",
+                ),
+            )
+        expiry = record.get("expiry")
+        if isinstance(expiry, dict):
+            summary["expiry"] = _copy_fields(
+                expiry,
+                ("expired", "classification_preserved", "material_usable"),
+            )
+        partitions = record.get("partition_sets")
+        if isinstance(partitions, dict):
+            summary["partition_sets"] = _copy_fields(
+                partitions, ("allowed", "blocked")
+            )
+        if "recovery_attempts" in summary:
+            summary["recovery_attempts"] = _sanitize_attempts(
+                summary["recovery_attempts"]
+            )
+        summaries[ref] = summary
+    return summaries
+
 
 def _source_value(sources: dict[str, dict], source: str, field: str) -> object:
     record = sources.get(source)
@@ -389,12 +720,18 @@ def _evaluate_target(
     target: object,
     family: object,
     exact_action: object,
+    decision_ref: object,
+    scope_id: object,
     tool_contract_digest: object,
     linked: dict[str, list[str]],
     records: dict,
     sets: dict[str, list[str]],
 ) -> tuple[str, bool, bool, bool, list[str], list[str]]:
-    if not isinstance(target, dict) or family not in _FAMILY_MATRIX:
+    if (
+        not isinstance(target, dict)
+        or not isinstance(family, str)
+        or family not in _FAMILY_MATRIX
+    ):
         return "failed", False, False, False, ["malformed_target"], []
 
     row = _FAMILY_MATRIX[family]
@@ -458,9 +795,26 @@ def _evaluate_target(
         and pre.get("authoritative") is True
         and pre.get("target_id") == target_id
         and _transport_complete(
-            pre_transport_ref, [target_id], linked, records
+            pre_transport_ref,
+            [target_id],
+            linked,
+            records,
+            expected_mutation=mutation_id,
         )
     )
+    pre_transport = (
+        records.get(pre_transport_ref)
+        if isinstance(pre_transport_ref, str)
+        else None
+    )
+    if (
+        isinstance(pre_transport, dict)
+        and isinstance(pre_transport.get("required_fields"), list)
+        and not {"canonical_target_id", *row["pre"]}.issubset(
+            pre_transport["required_fields"]
+        )
+    ):
+        pre_valid = False
     if not pre_valid:
         pre_issues.append("unproved_root_pre_state")
     if any(not _present_field(pre, field) for field in row["pre"]):
@@ -482,12 +836,15 @@ def _evaluate_target(
         or not _present_field(eligibility, "reason_code")
         or not _valid_string_set(eligibility_refs)
         or pre_ref not in eligibility_refs
-        or not isinstance(security, dict)
-        or security.get("kind") != "security_gate"
-        or security.get("verdict") != "allow"
-        or security.get("target_id") != target_id
-        or security.get("mutation_id") != mutation_id
-        or security.get("action") != action
+        or not _security_gate_allows(
+            security,
+            target_id,
+            mutation_id,
+            action,
+            pre_transport_ref,
+            decision_ref,
+            scope_id,
+        )
     ):
         pre_issues.append("unproved_eligibility_or_authorization")
 
@@ -529,9 +886,26 @@ def _evaluate_target(
         and post.get("authoritative") is True
         and post.get("target_id") == target_id
         and _transport_complete(
-            post_transport_ref, [target_id], linked, records
+            post_transport_ref,
+            [target_id],
+            linked,
+            records,
+            expected_mutation=mutation_id,
         )
     )
+    post_transport = (
+        records.get(post_transport_ref)
+        if isinstance(post_transport_ref, str)
+        else None
+    )
+    if (
+        isinstance(post_transport, dict)
+        and isinstance(post_transport.get("required_fields"), list)
+        and not {"canonical_target_id", *row["post"]}.issubset(
+            post_transport["required_fields"]
+        )
+    ):
+        post_verified = False
     if not post_verified:
         post_issues.append("unproved_root_post_state")
     if any(not _present_field(post, field) for field in row["post"]):
@@ -563,6 +937,7 @@ def _evaluate_target(
     ordering_is_admissible = (
         isinstance(ordering, dict)
         and ordering.get("status") == "proved"
+        and isinstance(ordering_kind, str)
         and ordering_kind in _ORDERING_KINDS
         and (ordering_kind == expected_kind or timestamp_is_bound)
     )
@@ -575,6 +950,12 @@ def _evaluate_target(
             post_issues.append("unresolved_ordering")
 
     if family == "create_append":
+        key_state = pre.get("key_state") if isinstance(pre, dict) else None
+        if not isinstance(key_state, str) or key_state not in {
+            "unused",
+            "preallocated",
+        }:
+            pre_issues.append("replayed_create_identity")
         binding_ref = target.get("identity_binding_ref")
         binding = records.get(binding_ref) if isinstance(binding_ref, str) else None
         if (
@@ -586,6 +967,16 @@ def _evaluate_target(
             post_issues.append("unresolved_create_identity")
         elif not isinstance(pre, dict) or not isinstance(receipt, dict):
             post_issues.append("unresolved_create_identity")
+        elif not all(
+            isinstance(value, str) and bool(value)
+            for value in (
+                pre.get("client_mutation_key"),
+                receipt.get("result_resource_id"),
+                binding.get("client_mutation_key"),
+                binding.get("result_resource_id"),
+            )
+        ):
+            failures.append("malformed_create_identity_binding")
         elif (
             binding.get("client_mutation_key") != pre.get("client_mutation_key")
             or binding.get("result_resource_id")
@@ -596,7 +987,7 @@ def _evaluate_target(
         witness = post.get("witness")
         if witness == "target_present":
             failures.append("authoritative_contradiction")
-        elif witness not in {
+        elif not isinstance(witness, str) or witness not in {
             "authoritative_tombstone",
             "deletion_audit",
             "authenticated_strong_negative",
@@ -673,6 +1064,8 @@ def _evaluate_target(
                 leaf,
                 leaf.get("family") if isinstance(leaf, dict) else None,
                 leaf_action,
+                decision_ref,
+                scope_id,
                 tool_contract_digest,
                 linked,
                 records,
@@ -712,12 +1105,14 @@ def _evaluate_target(
         list(dict.fromkeys(duplicates)),
     )
 
-
 def _zero_mutation_proved(
     manifest: dict,
     sets: dict[str, list[str]],
     linked: dict[str, list[str]],
     records: dict,
+    expected_mutation: object,
+    expected_scope: object,
+    expected_predicate: object,
 ) -> bool:
     proof = manifest.get("zero_mutation_proof")
     if (
@@ -727,12 +1122,14 @@ def _zero_mutation_proved(
         or sets["intended"]
         or sets["attempted"]
         or linked["actions"]
-        or linked["post"]
         or not _transport_complete(
             proof.get("transport_proof_ref"),
             proof["candidate_ids"],
             linked,
             records,
+            expected_mutation=expected_mutation,
+            expected_scope=expected_scope,
+            expected_predicate=expected_predicate,
         )
     ):
         return False
@@ -742,12 +1139,59 @@ def _zero_mutation_proved(
         return False
 
     exclusions = proof.get("exclusions")
-    return (
-        isinstance(exclusions, dict)
-        and set(exclusions) == set(proof["candidate_ids"])
-        and all(isinstance(reason, str) and reason for reason in exclusions.values())
-        and set(sets["skipped"]) == set(proof["candidate_ids"])
-    )
+    if (
+        not isinstance(exclusions, dict)
+        or set(exclusions) != set(proof["candidate_ids"])
+        or set(sets["skipped"]) != set(proof["candidate_ids"])
+    ):
+        return False
+    for target_id, exclusion in exclusions.items():
+        if not isinstance(exclusion, dict):
+            return False
+        pre_ref = exclusion.get("pre_ref")
+        predicate_ref = exclusion.get("predicate_evidence_ref")
+        pre = records.get(pre_ref) if isinstance(pre_ref, str) else None
+        predicate = (
+            records.get(predicate_ref) if isinstance(predicate_ref, str) else None
+        )
+        transport_ref = pre.get("transport_ref") if isinstance(pre, dict) else None
+        transport = (
+            records.get(transport_ref) if isinstance(transport_ref, str) else None
+        )
+        if (
+            not _present_field(exclusion, "reason_code")
+            or not _present_field(predicate, "reason_code")
+            or pre_ref not in linked["pre"]
+            or predicate_ref not in linked["pre"]
+            or not isinstance(pre, dict)
+            or pre.get("kind") != "pre_state"
+            or pre.get("owner") != "root"
+            or pre.get("authoritative") is not True
+            or pre.get("target_id") != target_id
+            or not _transport_complete(
+                transport_ref,
+                [target_id],
+                linked,
+                records,
+                expected_mutation=expected_mutation,
+            )
+            or not isinstance(predicate, dict)
+            or predicate.get("kind") != "exclusion"
+            or predicate.get("owner") != "root"
+            or predicate.get("authoritative") is not True
+            or predicate.get("target_id") != target_id
+            or predicate.get("eligible") is not False
+            or predicate.get("pre_ref") != pre_ref
+            or predicate.get("reason_code") != exclusion.get("reason_code")
+            or predicate.get("fixed_predicate")
+            != (
+                transport.get("fixed_predicate")
+                if isinstance(transport, dict)
+                else None
+            )
+        ):
+            return False
+    return True
 
 
 def _sanitize_target(target: object) -> dict:
@@ -766,9 +1210,10 @@ def _sanitize_target(target: object) -> dict:
         )
         if key in target
     }
+    aliases = target.get("aliases")
     sanitized["aliases"] = [
         {"alias": alias.get("alias"), "proof_ref": alias.get("proof_ref")}
-        for alias in target.get("aliases", [])
+        for alias in (aliases if isinstance(aliases, list) else [])
         if isinstance(alias, dict)
     ]
     eligibility = target.get("eligibility")
@@ -800,9 +1245,10 @@ def _sanitize_target(target: object) -> dict:
         )
         if isinstance(ordering, dict) and key in ordering
     }
-    if "leaf_entries" in target:
+    leaf_entries = target.get("leaf_entries")
+    if isinstance(leaf_entries, list):
         sanitized["leaf_entries"] = [
-            _sanitize_target(leaf) for leaf in target["leaf_entries"]
+            _sanitize_target(leaf) for leaf in leaf_entries
         ]
     return sanitized
 
@@ -856,14 +1302,15 @@ def _evaluate_acceptance_manifest(
     adapter = manifest.get("adapter")
     family = adapter.get("family") if isinstance(adapter, dict) else None
     if (
-        family not in _FAMILY_MATRIX
+        not isinstance(adapter, dict)
+        or not isinstance(family, str)
+        or family not in _FAMILY_MATRIX
         or not all(
             _present_field(adapter, field)
             for field in ("adapter_id", "adapter_version", "tool_contract_digest")
         )
     ):
         shape_reasons.append("malformed_acceptance_adapter")
-
     authorization = manifest.get("authorization")
     authorized_ids = (
         authorization.get("canonical_target_ids")
@@ -879,7 +1326,13 @@ def _evaluate_acceptance_manifest(
         not isinstance(authorization, dict)
         or not all(
             _present_field(authorization, field)
-            for field in ("scope_id", "decision_ref", "exact_action", "set_proof_ref")
+            for field in (
+                "scope_id",
+                "decision_ref",
+                "mutation_id",
+                "exact_action",
+                "set_proof_ref",
+            )
         )
         or not _valid_string_set(authorized_ids)
         or set(authorized_ids) != set(sets["authorized"])
@@ -887,12 +1340,7 @@ def _evaluate_acceptance_manifest(
         shape_reasons.append("malformed_acceptance_authorization")
 
     repair = manifest.get("repair")
-    if (
-        not isinstance(repair, dict)
-        or not _string_list(repair.get("allowed"))
-        or not _string_list(repair.get("forbidden"))
-        or not isinstance(repair.get("attempts"), list)
-    ):
+    if not _repair_valid(repair, linked, records):
         shape_reasons.append("malformed_evidence_repair")
 
     retention = manifest.get("retention")
@@ -953,6 +1401,13 @@ def _evaluate_acceptance_manifest(
         expected_set_scope if isinstance(expected_set_scope, list) else [],
         linked,
         records,
+        expected_mutation=authorization.get("mutation_id")
+        if isinstance(authorization, dict)
+        else None,
+        expected_scope=authorization.get("scope_id")
+        if isinstance(authorization, dict)
+        else None,
+        expected_predicate=exact_action,
     ):
         shape_reasons.append("unproved_authorized_set")
 
@@ -961,7 +1416,8 @@ def _evaluate_acceptance_manifest(
         if not isinstance(target, dict):
             continue
         target_id = target.get("canonical_target_id")
-        for alias in target.get("aliases", []):
+        aliases = target.get("aliases")
+        for alias in aliases if isinstance(aliases, list) else []:
             if isinstance(alias, dict) and isinstance(alias.get("alias"), str):
                 alias_targets.setdefault(alias["alias"], set()).add(target_id)
     if any(len(canonical_ids) != 1 for canonical_ids in alias_targets.values()):
@@ -978,6 +1434,12 @@ def _evaluate_acceptance_manifest(
             target,
             family,
             exact_action,
+            authorization.get("decision_ref")
+            if isinstance(authorization, dict)
+            else None,
+            authorization.get("scope_id")
+            if isinstance(authorization, dict)
+            else None,
             adapter.get("tool_contract_digest")
             if isinstance(adapter, dict)
             else None,
@@ -999,16 +1461,77 @@ def _evaluate_acceptance_manifest(
         target_reasons.extend(result[4])
         detected_duplicates.extend(result[5])
 
+    create_keys = []
+    create_results = []
+    pending_targets = [(target, family) for target in targets]
+    while pending_targets:
+        candidate, candidate_family = pending_targets.pop()
+        if not isinstance(candidate, dict):
+            continue
+        if candidate_family == "create_append":
+            pre = records.get(candidate.get("pre_ref"))
+            receipt = records.get(candidate.get("receipt_ref"))
+            if isinstance(pre, dict) and isinstance(
+                pre.get("client_mutation_key"), str
+            ):
+                create_keys.append(pre["client_mutation_key"])
+            if isinstance(receipt, dict) and isinstance(
+                receipt.get("result_resource_id"), str
+            ):
+                create_results.append(receipt["result_resource_id"])
+        leaf_entries = candidate.get("leaf_entries")
+        if candidate_family == "operation_composite" and isinstance(
+            leaf_entries, list
+        ):
+            pending_targets.extend(
+                (
+                    leaf,
+                    leaf.get("family") if isinstance(leaf, dict) else None,
+                )
+                for leaf in leaf_entries
+            )
+    if len(create_keys) != len(set(create_keys)):
+        shape_reasons.append("duplicate_create_mutation_key")
+    if len(create_results) != len(set(create_results)):
+        shape_reasons.append("duplicate_create_result_identity")
+
+    any_action = bool(replay_prohibited or linked["actions"])
+    if any_action:
+        for target_id, target_status in statuses.items():
+            if target_status == "blocked":
+                statuses[target_id] = "failed"
+                target_reasons.append("mutation_started_before_pre_action_gate")
+
+    outcome_rank = {
+        "skipped": 0,
+        "accepted": 1,
+        "unknown": 2,
+        "failed": 3,
+        "unauthorized": 4,
+        "duplicates": 5,
+    }
     outcome_priority = {}
-    for name in ("skipped", "accepted", "unknown", "failed", "unauthorized", "duplicates"):
+    for name in (
+        "skipped",
+        "accepted",
+        "unknown",
+        "failed",
+        "unauthorized",
+        "duplicates",
+    ):
         for target_id in sets[name]:
-            outcome_priority[target_id] = name
+            previous = outcome_priority.get(target_id)
+            if previous is None or outcome_rank[name] > outcome_rank[previous]:
+                outcome_priority[target_id] = name
     for target_id, target_status in statuses.items():
-        outcome_priority[target_id] = {
+        computed = {
             "accepted": "accepted",
             "indeterminate": "unknown",
             "failed": "failed",
-        }.get(target_status, outcome_priority.get(target_id, "skipped"))
+        }.get(target_status, "skipped")
+        previous = outcome_priority.get(target_id)
+        if previous is None or outcome_rank[computed] > outcome_rank[previous]:
+            outcome_priority[target_id] = computed
     for target_id in detected_duplicates:
         outcome_priority[target_id] = "duplicates"
 
@@ -1029,7 +1552,6 @@ def _evaluate_acceptance_manifest(
         name: len(normalized_sets[name]) for name in _RECONCILIATION_SETS
     }
 
-    any_action = bool(replay_prohibited or linked["actions"])
     failed = bool(
         normalized_sets["failed"]
         or normalized_sets["unauthorized"]
@@ -1041,16 +1563,27 @@ def _evaluate_acceptance_manifest(
         normalized_sets["unknown"]
         or any(status == "indeterminate" for status in statuses.values())
     )
+    terminal_ids = set()
+    for name in ("accepted", "failed", "unknown"):
+        terminal_ids.update(normalized_sets[name])
     blocked = bool(
         shape_reasons
         or any(status == "blocked" for status in statuses.values())
-        or set(sets["intended"])
-        != set(normalized_sets["accepted"])
-        | set(normalized_sets["failed"])
-        | set(normalized_sets["unknown"])
+        or len(sets["intended"]) != len(terminal_ids)
+        or any(target_id not in terminal_ids for target_id in sets["intended"])
     )
     zero_mutation_proved = not sets["intended"] and _zero_mutation_proved(
-        manifest, sets, linked, records
+        manifest,
+        sets,
+        linked,
+        records,
+        authorization.get("mutation_id")
+        if isinstance(authorization, dict)
+        else None,
+        authorization.get("scope_id")
+        if isinstance(authorization, dict)
+        else None,
+        exact_action,
     )
     if failed:
         status = "failed"
@@ -1090,15 +1623,22 @@ def _evaluate_acceptance_manifest(
             (
                 "scope_id",
                 "decision_ref",
+                "mutation_id",
                 "exact_action",
                 "canonical_target_ids",
                 "set_proof_ref",
             ),
         ),
         "evidence": linked,
+        "evidence_summaries": _sanitize_evidence_summaries(records, linked),
         "targets": [_sanitize_target(target) for target in targets],
         "reconciliation": normalized_sets,
-        "repair": _copy_fields(repair, ("allowed", "forbidden", "attempts")),
+        "repair": {
+            **_copy_fields(repair, ("allowed", "forbidden")),
+            "attempts": _sanitize_attempts(
+                repair.get("attempts") if isinstance(repair, dict) else None
+            ),
+        },
         "retention": _copy_fields(
             retention,
             (
@@ -1407,7 +1947,7 @@ def evaluate_root_workflow(metadata: object, events: object = ()) -> dict:
     }
     if "acceptance_manifest" in metadata and may_execute:
         manifest, terminal = _evaluate_acceptance_manifest(
-            metadata["acceptance_manifest"], metadata.get("revision")
+            metadata["acceptance_manifest"], revision
         )
         result["acceptance_manifest"] = manifest
         result["workflow_state"] = {"state": terminal, "final": True}

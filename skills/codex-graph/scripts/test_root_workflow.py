@@ -166,12 +166,28 @@ _FAMILY_CASES = {
 }
 
 
-def _transport_record(target_ids, capability="single_object_blob"):
+def _transport_record(
+    target_ids,
+    capability="single_object_blob",
+    mutation_id="mutation:proof",
+    required_fields=("canonical_target_id",),
+):
     record = {
         "kind": "transport_proof",
-        "outcome": "complete",
-        "capability": capability,
+        "mutation_id": mutation_id,
         "target_ids": list(target_ids),
+        "aggregate_scope": "declared_targets",
+        "fixed_predicate": "fixture_predicate",
+        "required_fields": list(required_fields),
+        "capability": capability,
+        "read_locator": f"read:{mutation_id}",
+        "requested_scope": list(target_ids),
+        "returned_scope": list(target_ids),
+        "relevant_versions": {},
+        "signals": [],
+        "recovery_attempts": [],
+        "no_progress_stop": "not_applicable",
+        "outcome": "complete",
     }
     if capability == "bounded_list":
         record["witness"] = {
@@ -207,9 +223,11 @@ def _target_fixture(family, prefix):
             "alias": f"alias:{prefix}",
             "canonical_target_ids": [target_id],
         },
-        refs["set"]: _transport_record([target_id], "bounded_list"),
-        refs["pre_transport"]: _transport_record([target_id]),
-        refs["post_transport"]: _transport_record([target_id]),
+        refs["set"]: _transport_record(
+            [target_id], "bounded_list", mutation_id
+        ),
+        refs["pre_transport"]: _transport_record([target_id], mutation_id=mutation_id),
+        refs["post_transport"]: _transport_record([target_id], mutation_id=mutation_id),
         refs["pre"]: {
             "kind": "pre_state",
             "owner": "root",
@@ -236,12 +254,42 @@ def _target_fixture(family, prefix):
         },
         refs["security"]: {
             "kind": "security_gate",
-            "verdict": "allow",
+            "item_id": f"item:{prefix}",
+            "batch_id": "batch:01",
             "target_id": target_id,
             "mutation_id": mutation_id,
             "action": case["action"],
+            "target_state": "intended",
+            "transport_proof_ref": refs["pre_transport"],
+            "item_axis": "unprotected",
+            "action_axis": "unprotected",
+            "categories": [],
+            "deterministic_markers": [],
+            "evidence_locators": [f"locator:sanitized:{prefix}"],
+            "classification_reasons": ["no_protected_signal"],
+            "uncertainty": False,
+            "expiry": {
+                "expired": False,
+                "classification_preserved": True,
+                "material_usable": True,
+            },
+            "authorization_current": True,
+            "authorization_ref": "decision:d_01@queue:q_01",
+            "authorization_scope_id": "scope:s_01",
+            "partition_sets": {"allowed": [target_id], "blocked": []},
+            "verdict": "allow",
         },
     }
+    records[refs["set"]]["aggregate_scope"] = "scope:s_01"
+    records[refs["set"]]["fixed_predicate"] = case["action"]
+    records[refs["pre_transport"]]["required_fields"] = [
+        "canonical_target_id",
+        *case["pre"],
+    ]
+    records[refs["post_transport"]]["required_fields"] = [
+        "canonical_target_id",
+        *case["post"],
+    ]
     target = {
         "canonical_target_id": target_id,
         "aliases": [{"alias": f"alias:{prefix}", "proof_ref": refs["alias"]}],
@@ -320,6 +368,7 @@ def family_manifest(family="record_state"):
         "authorization": {
             "scope_id": "scope:s_01",
             "decision_ref": "decision:d_01@queue:q_01",
+            "mutation_id": target["intent"]["mutation_id"],
             "exact_action": _FAMILY_CASES[family]["action"],
             "canonical_target_ids": [target_id],
             "set_proof_ref": refs["set"],
@@ -365,6 +414,58 @@ def family_manifest(family="record_state"):
         },
         "terminal": {"status": "accepted", "reason_code": "untrusted_claim"},
     }
+
+def add_target(manifest, family, prefix):
+    target, records, evidence, refs = _target_fixture(family, prefix)
+    old_id = target["canonical_target_id"]
+    target_id = f"{old_id}:{prefix}"
+    old_mutation = target["intent"]["mutation_id"]
+    manifest_mutation = manifest["authorization"]["mutation_id"]
+    target["intent"]["mutation_id"] = manifest_mutation
+    target["canonical_target_id"] = target_id
+    for record in records.values():
+        if not isinstance(record, dict):
+            continue
+        for field in ("target_id", "resource_id", "object_id"):
+            if record.get(field) == old_id:
+                record[field] = target_id
+        if record.get("mutation_id") == old_mutation:
+            record["mutation_id"] = manifest_mutation
+        if record.get("canonical_target_ids") == [old_id]:
+            record["canonical_target_ids"] = [target_id]
+        if record.get("target_ids") == [old_id]:
+            record["target_ids"] = [target_id]
+            record["requested_scope"] = [target_id]
+            record["returned_scope"] = [target_id]
+        partitions = record.get("partition_sets")
+        if isinstance(partitions, dict) and partitions.get("allowed") == [old_id]:
+            partitions["allowed"] = [target_id]
+
+    manifest["targets"].append(target)
+    manifest["evidence_records"].update(records)
+    for name, values in evidence.items():
+        manifest["evidence"][name].extend(values)
+    manifest["authorization"]["canonical_target_ids"].append(target_id)
+    for name in (
+        "authorized",
+        "inspected",
+        "intended",
+        "attempted",
+        "receipt_resolved",
+        "post_verified",
+        "accepted",
+    ):
+        manifest["reconciliation"][name].append(target_id)
+
+    set_ref = manifest["authorization"]["set_proof_ref"]
+    set_record = manifest["evidence_records"][set_ref]
+    all_targets = manifest["authorization"]["canonical_target_ids"]
+    set_record["target_ids"] = list(all_targets)
+    set_record["requested_scope"] = list(all_targets)
+    set_record["returned_scope"] = list(all_targets)
+    set_record["witness"]["authoritative_total"] = len(all_targets)
+    set_record["witness"]["unique_count"] = len(all_targets)
+    return target, refs
 
 
 def acceptance_manifest():
@@ -692,12 +793,44 @@ class RootWorkflowTests(unittest.TestCase):
         private["evidence_records"][private["targets"][0]["pre_ref"]][
             "raw_private_payload"
         ] = "not durable"
+        repair_ref = "repair-progress:01"
+        private["evidence_records"][repair_ref] = {
+            "kind": "repair_progress",
+            "owner": "root",
+            "authoritative": True,
+            "action": "narrow_read",
+            "scope_before": ["record:r_01", "record:r_02"],
+            "scope_after": ["record:r_01"],
+            "progress": "scope_narrowed",
+            "request_id": "request:repair:01",
+            "coverage_before": 0,
+            "coverage_after": 1,
+            "raw_private_payload": "not durable",
+        }
+        private["evidence"]["pre"].append(repair_ref)
+        private["repair"]["attempts"] = [
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01", "record:r_02"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": repair_ref,
+                "request_id": "request:repair:01",
+                "coverage_before": 0,
+                "coverage_after": 1,
+                "raw_private_payload": "not durable",
+            }
+        ]
         private_metadata = metadata()
         private_metadata["acceptance_manifest"] = private
         retained = evaluate_root_workflow(private_metadata)["acceptance_manifest"]
         self.assertNotIn("raw_private_payload", retained)
         self.assertNotIn("evidence_records", retained)
         self.assertNotIn("raw_private_payload", retained["targets"][0])
+        self.assertIn("evidence_summaries", retained)
+        self.assertNotIn(
+            "raw_private_payload", retained["repair"]["attempts"][0]
+        )
 
         controls = {}
         controls["shaped JSON"] = acceptance_manifest()
@@ -733,6 +866,202 @@ class RootWorkflowTests(unittest.TestCase):
             "attempted"
         ] = []
 
+        controls["transport truncation"] = acceptance_manifest()
+        target = controls["transport truncation"]["targets"][0]
+        pre = evidence_record(controls["transport truncation"], target, "pre")
+        controls["transport truncation"]["evidence_records"][
+            pre["transport_ref"]
+        ]["signals"] = ["truncated"]
+        controls["unbound set mutation"] = acceptance_manifest()
+        set_ref = controls["unbound set mutation"]["authorization"]["set_proof_ref"]
+        controls["unbound set mutation"]["evidence_records"][set_ref][
+            "mutation_id"
+        ] = "mutation:unrelated"
+
+        controls["unbound set scope"] = acceptance_manifest()
+        set_ref = controls["unbound set scope"]["authorization"]["set_proof_ref"]
+        controls["unbound set scope"]["evidence_records"][set_ref][
+            "aggregate_scope"
+        ] = "scope:unrelated"
+
+        controls["unbound set action"] = acceptance_manifest()
+        set_ref = controls["unbound set action"]["authorization"]["set_proof_ref"]
+        controls["unbound set action"]["evidence_records"][set_ref][
+            "fixed_predicate"
+        ] = "different_action"
+
+        controls["incomplete security gate"] = acceptance_manifest()
+        security_ref = controls["incomplete security gate"]["evidence"][
+            "security_gate"
+        ][0]
+        del controls["incomplete security gate"]["evidence_records"][security_ref][
+            "item_axis"
+        ]
+
+        controls["declared failed outcome"] = acceptance_manifest()
+        failed_id = controls["declared failed outcome"]["targets"][0][
+            "canonical_target_id"
+        ]
+        controls["declared failed outcome"]["reconciliation"]["accepted"] = []
+        controls["declared failed outcome"]["reconciliation"]["failed"] = [failed_id]
+
+        controls["mutating evidence repair"] = acceptance_manifest()
+        controls["mutating evidence repair"]["repair"]["allowed"].append(
+            "mutation_retry"
+        )
+
+        controls["non-progressing evidence repair"] = acceptance_manifest()
+        controls["non-progressing evidence repair"]["repair"]["attempts"] = [
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": "pre:01",
+                "request_id": "request:no-progress",
+                "coverage_before": 1,
+                "coverage_after": 1,
+            }
+        ]
+        controls["fabricated repair evidence"] = acceptance_manifest()
+        controls["fabricated repair evidence"]["repair"]["attempts"] = [
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01", "record:r_02"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": "pre:fabricated",
+                "request_id": "request:fabricated",
+                "coverage_before": 0,
+                "coverage_after": 1,
+            }
+        ]
+        controls["non-root repair evidence"] = acceptance_manifest()
+        repair_ref = "repair-progress:worker"
+        repair_progress = {
+            "kind": "repair_progress",
+            "owner": "worker",
+            "authoritative": True,
+            "action": "narrow_read",
+            "scope_before": ["record:r_01", "record:r_02"],
+            "scope_after": ["record:r_01"],
+            "progress": "scope_narrowed",
+            "request_id": "request:worker",
+            "coverage_before": 0,
+            "coverage_after": 1,
+        }
+        controls["non-root repair evidence"]["evidence_records"][
+            repair_ref
+        ] = repair_progress
+        controls["non-root repair evidence"]["evidence"]["pre"].append(repair_ref)
+        controls["non-root repair evidence"]["repair"]["attempts"] = [
+            {
+                **repair_progress,
+                "evidence_ref": repair_ref,
+            }
+        ]
+
+        controls["repeated repair request"] = acceptance_manifest()
+        controls["repeated repair request"]["repair"]["attempts"] = [
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01", "record:r_02"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": "pre:01",
+                "request_id": "request:repair:01",
+                "coverage_before": 0,
+                "coverage_after": 1,
+            },
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01", "record:r_03"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": "post:01",
+                "request_id": "request:repair:02",
+                "coverage_before": 1,
+                "coverage_after": 2,
+            },
+        ]
+
+        controls["malformed family"] = acceptance_manifest()
+        controls["malformed family"]["adapter"]["family"] = []
+        controls["incomplete transport predicate"] = acceptance_manifest()
+        target = controls["incomplete transport predicate"]["targets"][0]
+        pre = evidence_record(
+            controls["incomplete transport predicate"], target, "pre"
+        )
+        controls["incomplete transport predicate"]["evidence_records"][
+            pre["transport_ref"]
+        ]["required_fields"].remove("state")
+
+        controls["malformed ordering kind"] = acceptance_manifest()
+        controls["malformed ordering kind"]["targets"][0]["ordering_proof"][
+            "kind"
+        ] = []
+
+        controls["malformed alias collection"] = acceptance_manifest()
+        controls["malformed alias collection"]["targets"][0]["aliases"] = None
+
+        controls["unknown security category"] = acceptance_manifest()
+        security_ref = controls["unknown security category"]["evidence"][
+            "security_gate"
+        ][0]
+        controls["unknown security category"]["evidence_records"][security_ref][
+            "categories"
+        ] = ["unknown"]
+
+        controls["expired security gate"] = acceptance_manifest()
+        security_ref = controls["expired security gate"]["evidence"][
+            "security_gate"
+        ][0]
+        controls["expired security gate"]["evidence_records"][security_ref][
+            "expiry"
+        ]["expired"] = True
+        expired_gate = controls["expired security gate"]["evidence_records"][
+            security_ref
+        ]
+        expired_gate["expiry"]["material_usable"] = False
+        expired_gate["item_axis"] = "protected"
+        expired_gate["action_axis"] = "protected"
+        expired_gate["categories"] = ["security_account_control"]
+        expired_gate["classification_reasons"] = ["matched_security_signal"]
+
+        controls["stale gate authorization"] = acceptance_manifest()
+        security_ref = controls["stale gate authorization"]["evidence"][
+            "security_gate"
+        ][0]
+        controls["stale gate authorization"]["evidence_records"][security_ref][
+            "authorization_current"
+        ] = False
+
+        controls["missing security locator"] = acceptance_manifest()
+        security_ref = controls["missing security locator"]["evidence"][
+            "security_gate"
+        ][0]
+        controls["missing security locator"]["evidence_records"][security_ref][
+            "evidence_locators"
+        ] = []
+
+        controls["partial mutation with blocked target"] = acceptance_manifest()
+        second_target, second_refs = add_target(
+            controls["partial mutation with blocked target"], "record_state", "02"
+        )
+        del second_target["receipt_ref"]
+        del second_target["post_ref"]
+        controls["partial mutation with blocked target"]["evidence"]["actions"].remove(
+            second_refs["receipt"]
+        )
+        controls["partial mutation with blocked target"]["evidence"]["post"].remove(
+            second_refs["post"]
+        )
+        second_id = second_target["canonical_target_id"]
+        for name in ("attempted", "receipt_resolved", "post_verified", "accepted"):
+            controls["partial mutation with blocked target"]["reconciliation"][
+                name
+            ].remove(second_id)
+
         expected = {
             "shaped JSON": "failed",
             "worker post-state claim": "indeterminate",
@@ -741,6 +1070,26 @@ class RootWorkflowTests(unittest.TestCase):
             "intended target not inspected": "failed",
             "mismatched receipt action": "failed",
             "failure omitted from attempted set": "failed",
+            "transport truncation": "failed",
+            "unbound set mutation": "failed",
+            "unbound set scope": "failed",
+            "unbound set action": "failed",
+            "incomplete security gate": "failed",
+            "declared failed outcome": "failed",
+            "mutating evidence repair": "failed",
+            "non-progressing evidence repair": "failed",
+            "malformed family": "failed",
+            "incomplete transport predicate": "failed",
+            "malformed ordering kind": "failed",
+            "fabricated repair evidence": "failed",
+            "non-root repair evidence": "failed",
+            "repeated repair request": "failed",
+            "malformed alias collection": "failed",
+            "unknown security category": "failed",
+            "expired security gate": "accepted",
+            "stale gate authorization": "failed",
+            "missing security locator": "failed",
+            "partial mutation with blocked target": "failed",
         }
         for name, manifest in controls.items():
             with self.subTest(name=name):
@@ -750,6 +1099,34 @@ class RootWorkflowTests(unittest.TestCase):
                     evaluate_root_workflow(control_metadata)["workflow_state"],
                     {"state": expected[name], "final": True},
                 )
+                if name == "declared failed outcome":
+                    self.assertEqual(
+                        evaluate_root_workflow(control_metadata)[
+                            "acceptance_manifest"
+                        ]["reconciliation"]["failed"],
+                        ["record:r_01"],
+                    )
+
+    def test_manifest_uses_reproved_authority_revision(self):
+        reproved_metadata = metadata()
+        manifest = acceptance_manifest()
+        manifest["workflow"]["revision"] = 8
+        reproved_metadata["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(
+            reproved_metadata,
+            [
+                {
+                    "type": "worker_mutation_discovered",
+                    "worker_role": "writer",
+                    "mutation": {"identity": "publish-draft", "owner": "root"},
+                    "revision": 8,
+                    "worker_confinement": worker(),
+                }
+            ],
+        )
+        self.assertEqual(
+            result["workflow_state"], {"state": "accepted", "final": True}
+        )
 
     def test_compact_family_matrix_and_shared_terminal_controls(self):
         for family in _FAMILY_CASES:
@@ -810,6 +1187,34 @@ class RootWorkflowTests(unittest.TestCase):
                     unresolved_identity,
                     "indeterminate",
                 )
+                used_key = family_manifest(family)
+                target = used_key["targets"][0]
+                evidence_record(used_key, target, "pre")["key_state"] = "used"
+                controls["used create key"] = (used_key, "failed")
+
+                duplicate_binding = family_manifest(family)
+                add_target(duplicate_binding, family, "02")
+                controls["duplicate create binding"] = (
+                    duplicate_binding,
+                    "failed",
+                )
+                non_string_binding = family_manifest(family)
+                target = non_string_binding["targets"][0]
+                binding = non_string_binding["evidence_records"][
+                    target["identity_binding_ref"]
+                ]
+                evidence_record(non_string_binding, target, "pre")[
+                    "client_mutation_key"
+                ] = ["create-intent:ci_21"]
+                evidence_record(non_string_binding, target, "receipt")[
+                    "result_resource_id"
+                ] = ["note:n_21"]
+                binding["client_mutation_key"] = ["create-intent:ci_21"]
+                binding["result_resource_id"] = ["note:n_21"]
+                controls["non-string create binding"] = (
+                    non_string_binding,
+                    "failed",
+                )
             elif family == "delete_erase":
                 weak_negative = family_manifest(family)
                 target = weak_negative["targets"][0]
@@ -841,6 +1246,12 @@ class RootWorkflowTests(unittest.TestCase):
                     leaf_id,
                 ]
                 controls["duplicate leaf effect"] = (duplicate_leaf, "failed")
+                malformed_leaf = family_manifest(family)
+                malformed_leaf["targets"][0]["leaf_entries"] = None
+                controls["malformed leaf collection"] = (
+                    malformed_leaf,
+                    "failed",
+                )
 
             for name, (manifest, terminal) in controls.items():
                 with self.subTest(family=family, control=name):
@@ -899,6 +1310,7 @@ class RootWorkflowTests(unittest.TestCase):
         empty = acceptance_manifest()
         set_ref = empty["authorization"]["set_proof_ref"]
         empty["targets"] = []
+        empty["authorization"]["mutation_id"] = "mutation:zero"
         empty["authorization"]["canonical_target_ids"] = []
         empty["evidence"] = {
             "identity_proofs": [],
@@ -909,8 +1321,16 @@ class RootWorkflowTests(unittest.TestCase):
             "post": [],
         }
         empty["evidence_records"] = {
-            set_ref: _transport_record([], "bounded_list")
+            set_ref: _transport_record(
+                [], "bounded_list", empty["authorization"]["mutation_id"]
+            )
         }
+        empty["evidence_records"][set_ref]["aggregate_scope"] = empty[
+            "authorization"
+        ]["scope_id"]
+        empty["evidence_records"][set_ref]["fixed_predicate"] = empty[
+            "authorization"
+        ]["exact_action"]
         for name in (
             "authorized",
             "inspected",
@@ -942,16 +1362,53 @@ class RootWorkflowTests(unittest.TestCase):
         excluded["reconciliation"]["inspected"] = list(reversed(candidates))
         excluded["reconciliation"]["skipped"] = candidates
         excluded["evidence_records"][set_ref] = _transport_record(
-            list(reversed(candidates)), "bounded_list"
+            list(reversed(candidates)), "bounded_list", "mutation:zero"
         )
+        excluded["evidence_records"][set_ref]["aggregate_scope"] = excluded[
+            "authorization"
+        ]["scope_id"]
+        excluded["evidence_records"][set_ref]["fixed_predicate"] = excluded[
+            "authorization"
+        ]["exact_action"]
+        exclusions = {}
+        for suffix, candidate_id in zip(("a", "b"), candidates):
+            transport_ref = f"tp:exclude:{suffix}"
+            pre_ref = f"pre:exclude:{suffix}"
+            predicate_ref = f"exclusion:{suffix}"
+            excluded["evidence_records"][transport_ref] = _transport_record(
+                [candidate_id], mutation_id="mutation:zero"
+            )
+            excluded["evidence_records"][pre_ref] = {
+                "kind": "pre_state",
+                "owner": "root",
+                "authoritative": True,
+                "target_id": candidate_id,
+                "transport_ref": transport_ref,
+                "version": "ver:observed",
+                "state": "candidate",
+            }
+            excluded["evidence_records"][predicate_ref] = {
+                "kind": "exclusion",
+                "owner": "root",
+                "authoritative": True,
+                "target_id": candidate_id,
+                "eligible": False,
+                "reason_code": "predicate_miss",
+                "fixed_predicate": "fixture_predicate",
+                "pre_ref": pre_ref,
+            }
+            excluded["evidence"]["transport_proofs"].append(transport_ref)
+            excluded["evidence"]["pre"].extend([pre_ref, predicate_ref])
+            exclusions[candidate_id] = {
+                "reason_code": "predicate_miss",
+                "pre_ref": pre_ref,
+                "predicate_evidence_ref": predicate_ref,
+            }
         excluded["zero_mutation_proof"] = {
             "kind": "complete_exclusions",
             "transport_proof_ref": set_ref,
             "candidate_ids": candidates,
-            "exclusions": {
-                "record:r_a": "exclusion:predicate_miss",
-                "record:r_b": "exclusion:predicate_miss",
-            },
+            "exclusions": exclusions,
         }
         excluded_metadata = metadata()
         excluded_metadata["acceptance_manifest"] = excluded
@@ -962,6 +1419,24 @@ class RootWorkflowTests(unittest.TestCase):
 
         invalid_exclusions = copy.deepcopy(excluded)
         invalid_exclusions["zero_mutation_proof"]["exclusions"] = {}
+        missing_exclusion_evidence = copy.deepcopy(excluded)
+        first_pre_ref = missing_exclusion_evidence["zero_mutation_proof"][
+            "exclusions"
+        ]["record:r_a"]["pre_ref"]
+        del missing_exclusion_evidence["evidence_records"][first_pre_ref]
+        missing_exclusion_reason = copy.deepcopy(excluded)
+        exclusion = missing_exclusion_reason["zero_mutation_proof"]["exclusions"][
+            "record:r_a"
+        ]
+        predicate_ref = exclusion["predicate_evidence_ref"]
+        del exclusion["reason_code"]
+        del missing_exclusion_reason["evidence_records"][predicate_ref][
+            "reason_code"
+        ]
+        unbound_zero_proof = copy.deepcopy(empty)
+        unbound_zero_proof["evidence_records"][set_ref][
+            "mutation_id"
+        ] = "mutation:unrelated"
         for name, invalid in {
             "missing proof": {
                 key: value
@@ -969,6 +1444,9 @@ class RootWorkflowTests(unittest.TestCase):
                 if key != "zero_mutation_proof"
             },
             "incomplete exclusions": invalid_exclusions,
+            "missing exclusion evidence": missing_exclusion_evidence,
+            "missing exclusion reason": missing_exclusion_reason,
+            "unbound zero proof": unbound_zero_proof,
         }.items():
             with self.subTest(name=name):
                 invalid_metadata = metadata()
