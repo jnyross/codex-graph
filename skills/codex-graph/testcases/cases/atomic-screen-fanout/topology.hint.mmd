@@ -1,8 +1,0 @@
-flowchart TD
-    N1[Freeze candidate pool and hard gates] --> S1[Screen candidate 1 against gates]
-    N1 --> S2[Screen candidate 2 against gates]
-    N1 --> S3[Screen candidate N against gates]
-    S1 --> N3[Apply verdicts and fail-open pool policy]
-    S2 --> N3
-    S3 --> N3
-    N3 --> T1[Return survivors and complete kill log]

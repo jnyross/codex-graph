@@ -1,10 +1,14 @@
 # Progressive complexity ladder
 
-Use this ladder as the authority for graph complexity. Tiers are cumulative:
-the baseline is the lowest tier that satisfies every already-proven trigger
-(equivalently, the highest proven tier). Report every fired trigger, not only
-the baseline tier's trigger. Anything unproven is a run-time escalation gate,
-not an up-front node.
+Use this ladder as the authority for generic graph complexity only after the
+[authority preflight](authority-and-decisions.md). Safety topology always wins:
+a selected L0 safety topology or blocked authority verdict cannot be promoted
+by a complexity trigger.
+
+Tiers are cumulative. The baseline is the lowest tier that satisfies every
+already-proven generic trigger (equivalently, the highest proven tier). Report
+every fired trigger, not only the baseline tier's trigger. Anything unproven is
+a run-time escalation gate, not an up-front node.
 
 ## Verdict states
 
