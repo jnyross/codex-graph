@@ -349,14 +349,21 @@ function parseGraph(graph) {
       input: graph,
       encoding: "utf8",
       maxBuffer: 1024 * 1024,
+      timeout: 30_000,
     });
     if (result.error?.code === "ENOENT") {
       unavailable = result.error;
       continue;
     }
     if (result.error) throw result.error;
+    if (result.signal) {
+      throw new Error(`Mermaid parser terminated by signal ${result.signal}`);
+    }
+    if (result.status === null) {
+      throw new Error("Mermaid parser terminated without an exit status");
+    }
     if (result.status !== 0) {
-      throw new Error(result.stderr.trim() || "Mermaid parsing failed");
+      throw new Error(result.stderr?.trim() || "Mermaid parsing failed");
     }
     const parsed = JSON.parse(result.stdout);
     return {
