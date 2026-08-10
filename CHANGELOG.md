@@ -2,6 +2,10 @@
 
 All notable product releases are documented here.
 
+## [0.6.0] - 2026-08-10
+
+- feat: install reliability contract owners (#52)
+
 ## [0.5.8] - 2026-08-10
 
 - feat: replace all six lexical testcase bundles with explicit canonical-goal bindings, normalized structural contracts, one resolver and role-normalized offline conformance verdict (#42)
