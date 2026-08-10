@@ -418,6 +418,7 @@ def evaluate_root_workflow(
 
     checkpoint_valid = review_checkpoint is None
     prior_repair_used = False
+    checkpoint_state_reasons: list[str] = []
     if review_checkpoint is not None:
         if (
             not isinstance(review_checkpoint, dict)
@@ -429,6 +430,7 @@ def evaluate_root_workflow(
                 review_checkpoint.get("automatic_repair_used"), bool
             )
         ):
+            checkpoint_state_reasons.append("malformed_review_checkpoint")
             reasons.append("malformed_review_checkpoint")
         else:
             checkpoint_valid = True
@@ -438,6 +440,7 @@ def evaluate_root_workflow(
                 and not isinstance(revision, bool)
                 and review_checkpoint["design_revision"] > revision
             ):
+                checkpoint_state_reasons.append("stale_review_checkpoint")
                 reasons.append("stale_review_checkpoint")
 
     decision_loops = preflight.get("reachable_decision_loops")
@@ -624,6 +627,12 @@ def evaluate_root_workflow(
             current_design_digest,
             allow_previous=True,
         )
+        if checkpoint_state_reasons:
+            review_gate["reasons"] = list(
+                dict.fromkeys(review_gate["reasons"] + checkpoint_state_reasons)
+            )
+            review_gate["status"] = "block"
+            review_gate.pop("required_action", None)
         if checkpoint_valid:
             repair_count = review_gate.get("repair_count")
             verdict = review_gate.get("independent_review", {}).get("verdict")
@@ -656,8 +665,48 @@ def evaluate_root_workflow(
     next_review_checkpoint = (
         review_checkpoint if isinstance(review_checkpoint, dict) else None
     )
+    if review_checkpoint is not None and not checkpoint_valid:
+        origin_revision = (
+            review_checkpoint.get("design_revision")
+            if isinstance(review_checkpoint, dict)
+            else None
+        )
+        origin_digest = (
+            review_checkpoint.get("design_digest")
+            if isinstance(review_checkpoint, dict)
+            else None
+        )
+        if (
+            not isinstance(origin_revision, int)
+            or isinstance(origin_revision, bool)
+            or not isinstance(origin_digest, str)
+            or not origin_digest
+        ):
+            previous_review = review_gate.get("previous_review")
+            if isinstance(previous_review, dict):
+                origin_revision = previous_review.get("design_revision")
+                origin_digest = previous_review.get("design_digest")
+            else:
+                origin_revision = review_gate.get("design_revision")
+                origin_digest = review_gate.get("design_digest")
+        if (
+            isinstance(origin_revision, int)
+            and not isinstance(origin_revision, bool)
+            and isinstance(origin_digest, str)
+            and origin_digest
+        ):
+            next_review_checkpoint = {
+                "design_revision": origin_revision,
+                "design_digest": origin_digest,
+                "automatic_repair_used": True,
+            }
+        else:
+            next_review_checkpoint = {
+                "state": "unknown",
+                "automatic_repair_used": True,
+            }
     if (
-        review_gate["status"] != "not_applicable"
+        review_gate["status"] == "repair_required"
         and isinstance(review_gate.get("design_revision"), int)
         and not isinstance(review_gate["design_revision"], bool)
         and isinstance(review_gate.get("design_digest"), str)

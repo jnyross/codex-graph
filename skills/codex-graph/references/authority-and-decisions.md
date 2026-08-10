@@ -141,6 +141,12 @@ current digest, envelope shape, finding identities, permitted verdicts and
 dispositions, clearance evidence, and the one-repair maximum. It rejects every
 other verdict value. It does not make semantic judgments.
 
+The root checkpoint binds the used repair allowance to the revision and digest
+that returned `repair_required`. Later pass and block results preserve that
+repair origin so resume and correction remain possible. Only a new
+`repair_required` result may establish the origin. Malformed or unknown
+checkpoint state blocks and cannot restore an unused repair allowance.
+
 An unresolved must-fix produces a structured blocked diagnostic artifact. It
 also produces a precise parent question bound to the finding and revision.
 Offer retry, design change, deviation only when the finding is waivable, or

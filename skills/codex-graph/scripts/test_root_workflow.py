@@ -600,17 +600,32 @@ class RootWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(repaired_result["review_gate"]["status"], "pass")
         self.assertTrue(repaired_result["execution_permission"]["root_mutation"])
+        self.assertEqual(repaired_result["review_checkpoint"], review_checkpoint)
+        resumed_result = evaluate_root_workflow(
+            repaired,
+            review_checkpoint=repaired_result["review_checkpoint"],
+        )
+        self.assertEqual(resumed_result["review_gate"]["status"], "pass")
 
         stale_self_check = copy.deepcopy(repaired)
         stale_self_check["design_review"]["self_check"][
             "design_digest"
         ] = "sha256:design-7"
+        blocked_repaired_result = evaluate_root_workflow(
+            stale_self_check, review_checkpoint=review_checkpoint
+        )
         self.assertIn(
             "self_check_digest_mismatch",
-            evaluate_root_workflow(
-                stale_self_check, review_checkpoint=review_checkpoint
-            )["review_gate"]["reasons"],
+            blocked_repaired_result["review_gate"]["reasons"],
         )
+        self.assertEqual(
+            blocked_repaired_result["review_checkpoint"], review_checkpoint
+        )
+        corrected_result = evaluate_root_workflow(
+            repaired,
+            review_checkpoint=blocked_repaired_result["review_checkpoint"],
+        )
+        self.assertEqual(corrected_result["review_gate"]["status"], "pass")
 
         missing_previous_review = copy.deepcopy(repaired)
         del missing_previous_review["design_review"]["previous_review"]
@@ -734,6 +749,78 @@ class RootWorkflowTests(unittest.TestCase):
             "repair_limit_exceeded", reset_result["review_gate"]["reasons"]
         )
         self.assertFalse(reset_result["execution_permission"]["root_mutation"])
+
+    def test_malformed_checkpoint_cannot_restore_repair_allowance(self):
+        prior_revision = metadata()
+        prior_revision["design_review"]["independent_review"]["verdict"] = "repair"
+        prior_revision["design_review"]["independent_review"]["findings"] = [finding()]
+
+        repaired = metadata()
+        repaired["revision"] = 8
+        repaired["authority_preflight"]["revision"] = 8
+        repaired["design_digest"] = "sha256:design-8"
+        repaired["design_review"] = review(
+            design_digest="sha256:design-8", repair_count=1
+        )
+        repaired["design_review"]["design_revision"] = 8
+        repaired["design_review"]["previous_review"] = copy.deepcopy(
+            prior_revision["design_review"]
+        )
+        repaired["design_review"]["independent_review"]["identity"] = "review-8"
+        repaired_finding = finding(disposition="repaired")
+        repaired_finding["clearance"] = {
+            "finding_identity": "F-1",
+            "review_identity": "review-8",
+            "design_digest": "sha256:design-8",
+        }
+        repaired["design_review"]["independent_review"]["findings"] = [
+            repaired_finding
+        ]
+
+        malformed_result = evaluate_root_workflow(
+            repaired,
+            review_checkpoint={
+                "design_revision": 7,
+                "design_digest": "sha256:design-7",
+            },
+        )
+        self.assertEqual(malformed_result["review_gate"]["status"], "block")
+        self.assertIn(
+            "malformed_review_checkpoint",
+            malformed_result["authority_preflight"]["reasons"],
+        )
+        self.assertEqual(
+            malformed_result["review_checkpoint"],
+            {
+                "design_revision": 7,
+                "design_digest": "sha256:design-7",
+                "automatic_repair_used": True,
+            },
+        )
+
+        reset = metadata()
+        reset["revision"] = 9
+        reset["authority_preflight"]["revision"] = 9
+        reset["design_digest"] = "sha256:design-9"
+        reset["design_review"] = review(
+            design_digest="sha256:design-9",
+            verdict="repair",
+            repair_count=0,
+        )
+        reset["design_review"]["design_revision"] = 9
+        reset["design_review"]["independent_review"]["identity"] = "review-9"
+        reset_finding = finding()
+        reset_finding["identity"] = "F-2"
+        reset["design_review"]["independent_review"]["findings"] = [reset_finding]
+
+        reset_result = evaluate_root_workflow(
+            reset,
+            review_checkpoint=malformed_result["review_checkpoint"],
+        )
+        self.assertEqual(reset_result["review_gate"]["status"], "block")
+        self.assertIn(
+            "repair_limit_exceeded", reset_result["review_gate"]["reasons"]
+        )
 
 if __name__ == "__main__":
     unittest.main()
