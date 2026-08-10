@@ -1,0 +1,78 @@
+{
+  "case_id": "disjoint-writers-worktree",
+  "schema_version": "1",
+  "canonical_goal_digest": "e412c41933eb7531d14bd39a2d2484833cec692861a30216b1b4e73530112d47",
+  "role_instances": [
+    { "role": "scope_owner", "kind": "contract" },
+    { "role": "discovery_conventions", "kind": "discovery" },
+    { "role": "discovery_layout", "kind": "discovery" },
+    { "role": "writer_csv", "kind": "writer" },
+    { "role": "writer_json", "kind": "writer" },
+    { "role": "validator", "kind": "validator" },
+    { "role": "validation_gate", "kind": "gate" },
+    { "role": "repair", "kind": "repair" },
+    { "role": "revalidator", "kind": "validator" },
+    { "role": "publication_terminal", "kind": "terminal" },
+    { "role": "failed_terminal", "kind": "terminal" }
+  ],
+  "topology": [
+    { "from": "scope_owner", "to": "discovery_conventions" },
+    { "from": "scope_owner", "to": "discovery_layout" },
+    { "from": "discovery_conventions", "to": "writer_csv" },
+    { "from": "discovery_layout", "to": "writer_csv" },
+    { "from": "discovery_conventions", "to": "writer_json" },
+    { "from": "discovery_layout", "to": "writer_json" },
+    { "from": "writer_csv", "to": "validator" },
+    { "from": "writer_json", "to": "validator" },
+    { "from": "validator", "to": "validation_gate" },
+    { "from": "validation_gate", "to": "publication_terminal", "outcome": "pass" },
+    { "from": "validation_gate", "to": "repair", "outcome": "repair" },
+    { "from": "repair", "to": "revalidator" },
+    { "from": "revalidator", "to": "publication_terminal", "outcome": "pass" },
+    { "from": "revalidator", "to": "failed_terminal", "outcome": "fail" }
+  ],
+  "environments": {
+    "scope_owner": "local",
+    "discovery_conventions": "local",
+    "discovery_layout": "local",
+    "writer_csv": "worktree",
+    "writer_json": "worktree",
+    "validator": "local",
+    "validation_gate": "local",
+    "repair": "local",
+    "revalidator": "local",
+    "publication_terminal": "local",
+    "failed_terminal": "local"
+  },
+  "concurrency": [
+    ["discovery_conventions", "discovery_layout"],
+    ["writer_csv", "writer_json"]
+  ],
+  "gates": [
+    { "role": "validation_gate", "outcomes": ["pass", "repair"] }
+  ],
+  "repair_edges": [
+    { "from": "validation_gate", "to": "repair" },
+    { "from": "repair", "to": "revalidator" }
+  ],
+  "terminal_paths": [
+    { "from": "validation_gate", "to": "publication_terminal", "outcome": "pass" },
+    { "from": "revalidator", "to": "publication_terminal", "outcome": "pass" },
+    { "from": "revalidator", "to": "failed_terminal", "outcome": "fail" }
+  ],
+  "collection": {
+    "read_first": true,
+    "read_after_wait": true,
+    "max_output_chars_per_item": 20000,
+    "pending_setup_resolution": "bounded"
+  },
+  "assertions": [
+    {
+      "id": "literal:no-global-worktree-instruction",
+      "operator": "excludes_exact_text",
+      "roles": ["scope_owner", "discovery_conventions", "discovery_layout", "writer_csv", "writer_json"],
+      "field": "prompt",
+      "value": "apply worktree to every node"
+    }
+  ]
+}

@@ -24,6 +24,7 @@ The script must be real and complete. Do not ask a later Codex turn to write it.
 6. For repository work, inspect only the applicable instructions, overview, manifests, test configuration, and named files needed to tailor the graph.
 7. Preserve the intended semantics of a supplied graph. Change only what executability, safety, or boundedness requires.
 8. Activate bounded self-testing only when the user asks to test, package, monitor, or improve the generated workflow.
+9. For an explicit `case_id`, use the single resolver and generation/validation binding in `testcases/README.md`; reject custom, missing, inferred, substituted, or mismatched cases, and emit its required structural artifacts. Without an explicit `case_id`, do not attach a testcase.
 
 ## Precedence
 

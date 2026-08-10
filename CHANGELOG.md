@@ -2,6 +2,12 @@
 
 All notable product releases are documented here.
 
+## [0.5.8] - 2026-08-10
+
+- feat: replace all six lexical testcase bundles with explicit canonical-goal bindings, normalized structural contracts, one resolver and role-normalized offline conformance verdict (#42)
+
+- WF-02: replace lexical testcases with structural conformance (#51)
+
 ## [0.5.7] - 2026-08-10
 
 - WF-03: enforce authority-safe root admission (#50)
@@ -34,7 +40,7 @@ All notable product releases are documented here.
 
 ## [0.5.0] - 2026-08-09
 
-- feat: dynamic-workflow golden test cases under `skills/codex-graph/testcases/` — six case bundles derived from real Grok Rhai and Claude multi-agent orchestration shapes (atomic screen fan-out, slice generators, sealed POV + adversarial fact-check, non-binding synthesis, dual validation, disjoint worktree writers), an offline expectations checker (`harness/`), pattern-derived collection tests, and catalog research in `docs/dynamic-workflow-testcase-catalog.md`; both regression runners now execute the new suite and lint the topology hints (#16)
+- feat: dynamic-workflow golden test cases under `skills/codex-graph/testcases/` — six case bundles derived from real Grok Rhai and Claude multi-agent orchestration shapes (atomic screen fan-out, slice generators, sealed POV + adversarial fact-check, non-binding synthesis, dual validation, disjoint worktree writers), an offline expectations checker, pattern-derived collection tests, and source-shape research; both regression runners execute the suite (#16)
 
 ## [0.4.5] - 2026-08-09
 
