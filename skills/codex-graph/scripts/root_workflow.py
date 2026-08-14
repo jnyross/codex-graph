@@ -1576,8 +1576,14 @@ def _evaluate_acceptance_manifest(
                 outcome_priority[target_id] = name
     for target_id, target_status in statuses.items():
         computed = computed_status.get(target_status, "skipped")
-        rank = computed_rank.get(target_status, outcome_rank.get(computed, 0))
         previous = outcome_priority.get(target_id)
+        if target_status == "blocked":
+            if previous == "accepted":
+                outcome_priority[target_id] = "skipped"
+            elif previous is None:
+                outcome_priority[target_id] = "skipped"
+            continue
+        rank = computed_rank.get(target_status, outcome_rank.get(computed, 0))
         if previous is None or rank > outcome_rank[previous]:
             outcome_priority[target_id] = computed
     for target_id in detected_duplicates:

@@ -2163,6 +2163,33 @@ class RootWorkflowTests(unittest.TestCase):
             0,
         )
 
+    def test_declared_failed_target_with_no_evidence_stays_failed(self):
+        """A target the manifest reports as failed must stay failed even when the evaluator has no action evidence."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        target_id = target["canonical_target_id"]
+        del target["receipt_ref"]
+        del target["post_ref"]
+        manifest["evidence"]["actions"] = []
+        manifest["evidence"]["post"] = []
+        for name in ("attempted", "receipt_resolved", "post_verified", "accepted"):
+            manifest["reconciliation"][name] = []
+        manifest["reconciliation"]["failed"] = [target_id]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"], {"state": "failed", "final": True}
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["reconciliation"]["failed"],
+            [target_id],
+        )
+        self.assertNotIn(
+            target_id,
+            result["acceptance_manifest"]["reconciliation"]["skipped"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
