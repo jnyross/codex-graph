@@ -790,6 +790,24 @@ class RootWorkflowTests(unittest.TestCase):
         self.assertIn("forensics_incomplete", blocked["reasons"])
         self.assertEqual(blocked["forensics"]["cap_bytes"], 0)
 
+    def test_forensics_accepts_harness_truncation_suffix(self):
+        fixture = metadata()
+        proof = fixture["mutation_admission"]["transport_proof"]
+        proof["signals"] = [{"scope": "call", "kind": "truncation_warning"}]
+        prefix = "x" * 2000
+        proof["forensics"] = {
+            "cap_bytes": 2000,
+            "last_raw": f"{prefix} … [truncated 5000 chars]",
+            "completed_evidence": [],
+            "live_handles": [],
+            "failed_scope": ["draft:1"],
+            "signals": proof["signals"],
+        }
+        blocked = evaluate_root_workflow(fixture)["mutation_admission"]
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertNotIn("forensics_incomplete", blocked["reasons"])
+        self.assertEqual(blocked["forensics"]["last_raw"], proof["forensics"]["last_raw"])
+
     def test_protected_domains_require_exact_current_authorization(self):
         categories = [
             "security_account_control",

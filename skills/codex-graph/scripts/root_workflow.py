@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import re
+
 
 _TOPOLOGIES = {"L0", "L1", "L2", "L3", "L4"}
 _TRIGGER_STATES = {"fired", "not_fired", "not_evaluated", "not_applicable"}
 _PROCESS_FACTS = {"process_exit", "generated_output", "attempt_pass"}
 
-# Maximum self-reported forensics cap in bytes; must match the JS harness constant.
+# Maximum self-reported forensics cap in characters; must match the JS harness constant.
 _FORENSIC_RESULT_CAP = 2000
+
+# Truncation suffix produced by the JS harness: " … [truncated N chars]".
+_FORENSIC_TRUNCATION_SUFFIX_RE = re.compile(r"^ … \[truncated (\d+) chars\]$")
 
 _CLASSIFICATION_RESULTS = {"protected", "unprotected", "uncertain"}
 _PROTECTED_CATEGORIES = {
@@ -48,13 +53,23 @@ def _blocked_admission(
     if not isinstance(signals, list):
         signals = []
     supplied = proof.get("forensics") if isinstance(proof, dict) else None
+    cap_bytes = supplied.get("cap_bytes") if isinstance(supplied, dict) else None
+    last_raw = supplied.get("last_raw") if isinstance(supplied, dict) else None
+    fits_cap = False
+    if isinstance(last_raw, str) and isinstance(cap_bytes, int) and not isinstance(cap_bytes, bool) and 0 <= cap_bytes <= _FORENSIC_RESULT_CAP:
+        last_len = len(last_raw)
+        if last_len <= cap_bytes:
+            fits_cap = True
+        elif cap_bytes > 0:
+            prefix = last_raw[:cap_bytes]
+            suffix = last_raw[cap_bytes:]
+            match = _FORENSIC_TRUNCATION_SUFFIX_RE.match(suffix)
+            if match:
+                reported_extra = int(match.group(1))
+                fits_cap = reported_extra > 0 and last_len == cap_bytes + len(suffix) and len(prefix) == cap_bytes
     forensics_valid = (
         isinstance(supplied, dict)
-        and isinstance(supplied.get("cap_bytes"), int)
-        and not isinstance(supplied["cap_bytes"], bool)
-        and 0 <= supplied["cap_bytes"] <= _FORENSIC_RESULT_CAP
-        and isinstance(supplied.get("last_raw"), str)
-        and len(supplied["last_raw"].encode()) <= supplied["cap_bytes"]
+        and fits_cap
         and _string_list(supplied.get("completed_evidence"))
         and _string_list(supplied.get("live_handles"))
         and supplied.get("failed_scope") == blocked_items
