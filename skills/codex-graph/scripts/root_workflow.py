@@ -70,7 +70,9 @@ def _blocked_admission(
         }
         result["reasons"] = list(dict.fromkeys([*result["reasons"], "forensics_incomplete"]))
 
-    capability = proof.get("capability") if isinstance(proof, dict) else "transport"
+    capability = proof.get("capability") if isinstance(proof, dict) else None
+    if not isinstance(capability, str) or not capability:
+        capability = "transport"
     scope = ", ".join(blocked_items) or "the fixed mutation scope"
     unblock = proof.get("unblock_condition") if isinstance(proof, dict) else None
     result.update(
@@ -1564,6 +1566,9 @@ def evaluate_root_workflow(
         mutation_admission is not None
         and mutation_admission["status"] == "blocked"
     )
+    workflow_state = (
+        "human_decision_required" if human_decision_required else "continue"
+    )
     return {
         "authority_preflight": authority_preflight,
         "selected_topology": selected_topology,
@@ -1579,19 +1584,7 @@ def evaluate_root_workflow(
         "review_gate": review_gate,
         "review_checkpoint": next_review_checkpoint,
         "workflow_state": {
-            "state": (
-                "human_decision_required"
-                if human_decision_required
-                else "continue"
-                if not mutation_blocked or delegated_work
-                else "blocked"
-            ),
-            "final": (
-                mutation_blocked
-                and not delegated_work
-                and not human_decision_required
-                and not runtime_decision
-                and selected_topology != "L0"
-            ),
+            "state": workflow_state,
+            "final": workflow_state == "blocked",
         },
     }

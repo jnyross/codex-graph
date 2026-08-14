@@ -1057,6 +1057,35 @@ class RootWorkflowTests(unittest.TestCase):
         self.assertFalse(no_proposal_result["execution_permission"]["root_mutation"])
         self.assertTrue(no_proposal_result["execution_permission"]["delegated_work"])
 
+    def test_blocked_mutation_is_not_final_for_l0_and_repair(self):
+        l0 = metadata()
+        l0["authority_preflight"]["generic_topology"] = "L0"
+        l0["authority_preflight"]["workers"] = []
+        l0["mutation_admission"]["transport_proof"]["signals"] = [
+            {"scope": "call", "kind": "truncation_warning"}
+        ]
+        l0_result = evaluate_root_workflow(l0)
+        self.assertEqual(l0_result["selected_topology"], "L0")
+        self.assertEqual(
+            l0_result["workflow_state"], {"state": "continue", "final": False}
+        )
+        self.assertFalse(l0_result["execution_permission"]["root_mutation"])
+        self.assertFalse(l0_result["execution_permission"]["delegated_work"])
+
+        repair = metadata()
+        repair["design_review"]["independent_review"]["verdict"] = "repair"
+        repair["design_review"]["independent_review"]["findings"] = [finding()]
+        repair["mutation_admission"]["transport_proof"]["signals"] = [
+            {"scope": "call", "kind": "truncation_warning"}
+        ]
+        repair_result = evaluate_root_workflow(repair)
+        self.assertEqual(repair_result["review_gate"]["status"], "repair_required")
+        self.assertEqual(
+            repair_result["workflow_state"], {"state": "continue", "final": False}
+        )
+        self.assertFalse(repair_result["execution_permission"]["root_mutation"])
+        self.assertFalse(repair_result["execution_permission"]["delegated_work"])
+
     def test_exact_revision_independent_review_gates_authority_bearing_design(self):
         admitted = evaluate_root_workflow(metadata())
         self.assertEqual(admitted["review_gate"]["status"], "pass")
