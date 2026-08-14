@@ -1,6 +1,6 @@
 {
   "name": "codex-graph",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Design bounded agent graphs and generate runnable Codex Code Mode workflows.",
   "author": {
     "name": "jnyross",
