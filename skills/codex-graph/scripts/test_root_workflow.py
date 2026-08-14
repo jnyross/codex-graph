@@ -3278,5 +3278,31 @@ class RootWorkflowTests(unittest.TestCase):
         self.assertTrue(result["workflow_state"]["final"])
 
 
+    def test_bounded_list_witness_non_dict_rejects_without_crash(self):
+        """A bounded-list transport witness that is not a dict must not crash the evaluator."""
+        manifest = acceptance_manifest()
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        manifest["evidence_records"][set_ref]["witness"] = "not-a-dict"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_malformed_target_entry_blocks_acceptance(self):
+        """A target entry without a usable identifier must prevent the manifest from being accepted."""
+        manifest = acceptance_manifest()
+        manifest["targets"].append({"family": "record_state"})
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1205,10 +1205,11 @@ def _transport_complete(
     witness = record.get("witness")
     capability = record.get("capability")
     if capability == "bounded_list":
+        if not isinstance(witness, dict):
+            return False
         unique_count = witness.get("unique_count")
         return (
-            isinstance(witness, dict)
-            and isinstance(witness.get("authoritative_total"), int)
+            isinstance(witness.get("authoritative_total"), int)
             and not isinstance(witness["authoritative_total"], bool)
             and witness["authoritative_total"] == len(record["target_ids"])
             and isinstance(unique_count, int)
@@ -2301,6 +2302,8 @@ def _evaluate_acceptance_manifest(
                 post_verified.append(target_id)
             if result[3] and target_id not in replay_prohibited:
                 replay_prohibited.append(target_id)
+        else:
+            shape_reasons.append("malformed_target_entry")
         target_reasons.extend(result[4])
         detected_duplicates.extend(result[5])
 
