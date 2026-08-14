@@ -236,7 +236,7 @@ _FAMILY_MATRIX = {
         "receipt_status": ("accepted", "completed"),
     },
 }
-_EVIDENCE_FIELDS = {
+_EVIDENCE_FIELDS = [
     "kind",
     "owner",
     "authoritative",
@@ -285,11 +285,12 @@ _EVIDENCE_FIELDS = {
     "eligible",
     "reason_code",
     "pre_ref",
-}
+]
 for _family_row in _FAMILY_MATRIX.values():
-    _EVIDENCE_FIELDS.update(_family_row["pre"])
-    _EVIDENCE_FIELDS.update(_family_row["receipt"])
-    _EVIDENCE_FIELDS.update(_family_row["post"])
+    _EVIDENCE_FIELDS.extend(_family_row["pre"])
+    _EVIDENCE_FIELDS.extend(_family_row["receipt"])
+    _EVIDENCE_FIELDS.extend(_family_row["post"])
+_EVIDENCE_FIELDS = list(dict.fromkeys(_EVIDENCE_FIELDS))
 
 
 def _present_field(record: object, field: str) -> bool:
@@ -371,6 +372,7 @@ def _transport_complete(
             expected_mutation is not None
             and record.get("mutation_id") != expected_mutation
         )
+        or not _valid_string_set(expected_targets)
         or not _valid_string_set(record.get("target_ids"))
         or set(record["target_ids"]) != set(expected_targets)
         or not _present_field(record, "aggregate_scope")
@@ -726,6 +728,7 @@ def _evaluate_target(
     linked: dict[str, list[str]],
     records: dict,
     sets: dict[str, list[str]],
+    authorized_mutation_id: object = None,
 ) -> tuple[str, bool, bool, bool, list[str], list[str]]:
     if (
         not isinstance(target, dict)
@@ -772,17 +775,26 @@ def _evaluate_target(
             pre_issues.append("unproved_alias")
 
     intent = target.get("intent")
-    mutation_id = intent.get("mutation_id") if isinstance(intent, dict) else None
+    intent_mutation = intent.get("mutation_id") if isinstance(intent, dict) else None
     action = intent.get("action") if isinstance(intent, dict) else None
     if (
         not isinstance(intent, dict)
-        or not isinstance(mutation_id, str)
-        or not mutation_id
+        or not isinstance(intent_mutation, str)
+        or not intent_mutation
+        or (
+            isinstance(authorized_mutation_id, str)
+            and intent_mutation != authorized_mutation_id
+        )
         or not isinstance(action, str)
         or not action
         or action != exact_action
     ):
         pre_issues.append("malformed_exact_intent")
+    expected_mutation = (
+        authorized_mutation_id
+        if isinstance(authorized_mutation_id, str)
+        else intent_mutation
+    )
 
     pre_ref = target.get("pre_ref")
     pre = records.get(pre_ref) if isinstance(pre_ref, str) else None
@@ -799,7 +811,7 @@ def _evaluate_target(
             [target_id],
             linked,
             records,
-            expected_mutation=mutation_id,
+            expected_mutation=expected_mutation,
         )
     )
     pre_transport = (
@@ -839,7 +851,7 @@ def _evaluate_target(
         or not _security_gate_allows(
             security,
             target_id,
-            mutation_id,
+            expected_mutation,
             action,
             pre_transport_ref,
             decision_ref,
@@ -858,7 +870,7 @@ def _evaluate_target(
     )
     if receipt_core and (
         receipt.get("target_id") != target_id
-        or receipt.get("mutation_id") != mutation_id
+        or receipt.get("mutation_id") != expected_mutation
         or receipt.get("action") != action
     ):
         failures.append("authoritative_receipt_contradiction")
@@ -890,7 +902,7 @@ def _evaluate_target(
             [target_id],
             linked,
             records,
-            expected_mutation=mutation_id,
+            expected_mutation=expected_mutation,
         )
     )
     post_transport = (
@@ -1102,7 +1114,7 @@ def _evaluate_target(
         post_verified,
         action_started,
         reasons,
-        list(dict.fromkeys(duplicates)),
+        list(dict.fromkeys(d for d in duplicates if isinstance(d, str))),
     )
 
 def _zero_mutation_proved(
@@ -1387,6 +1399,13 @@ def _evaluate_acceptance_manifest(
         shape_reasons.append("receipt_without_attempt")
     if not set(sets["post_verified"]).issubset(sets["receipt_resolved"]):
         shape_reasons.append("post_without_receipt")
+    if not set(sets["authorized"]).issubset(
+        set(sets["intended"])
+        | set(sets["skipped"])
+        | set(sets["unauthorized"])
+        | set(sets["duplicates"])
+    ):
+        shape_reasons.append("authorized_target_uncovered")
 
     zero_proof = manifest.get("zero_mutation_proof")
     expected_set_scope = (
@@ -1450,6 +1469,9 @@ def _evaluate_acceptance_manifest(
             linked,
             records,
             sets,
+            authorized_mutation_id=authorization.get("mutation_id")
+            if isinstance(authorization, dict)
+            else None,
         )
         target_id = (
             target.get("canonical_target_id") if isinstance(target, dict) else None

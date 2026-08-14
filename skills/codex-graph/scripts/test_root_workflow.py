@@ -2066,6 +2066,40 @@ class RootWorkflowTests(unittest.TestCase):
                     {"state": "accepted", "final": True},
                 )
 
+    def test_target_intent_must_match_authorized_mutation_id(self):
+        """A target cannot claim a mutation_id different from the authorization."""
+        manifest = family_manifest("record_state")
+        manifest["targets"][0]["intent"]["mutation_id"] = "mutation:forged"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+
+    def test_authorized_targets_must_be_covered_by_intent_or_dispositions(self):
+        """An authorized target that is not intended, skipped, unauthorized, or duplicate is blocked."""
+        manifest = acceptance_manifest()
+        target_id = manifest["targets"][0]["canonical_target_id"]
+        extra = "record:uncovered"
+        manifest["authorization"]["canonical_target_ids"].append(extra)
+        manifest["reconciliation"]["authorized"].append(extra)
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        set_record = manifest["evidence_records"][set_ref]
+        set_record["target_ids"].append(extra)
+        set_record["requested_scope"].append(extra)
+        set_record["returned_scope"].append(extra)
+        set_record["witness"]["authoritative_total"] = 2
+        set_record["witness"]["unique_count"] = 2
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
