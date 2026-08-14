@@ -21,6 +21,222 @@ def worker(role="writer"):
     }
 
 
+def classification_binding(targets, target=None):
+    binding = {
+        "transport_proof_id": "transport:integrate-draft",
+        "mutation_id": "integrate-draft",
+        "action": "integrate",
+        "target_state": "integrated",
+        "predicate_identity": "selected-draft",
+        "required_fields": ["identity", "version", "state", "content"],
+        "content_fields": ["content"],
+        "aggregate_scope": {
+            "identity": "aggregate:selected-drafts",
+            "target_ids": [item["identity"] for item in targets],
+            "requires_complete_set": False,
+        },
+        "target_bindings": copy.deepcopy(targets),
+    }
+    if target is not None:
+        binding["target_binding"] = copy.deepcopy(target)
+    return binding
+
+
+
+def parent_authorization(identity):
+    decision = {
+        "identity": identity,
+        "choice": "authorize_exact_mutation",
+        "queue_revision": 11,
+        "mutation_id": "integrate-draft",
+        "action": "integrate",
+        "target_state": "integrated",
+        "item_ids": ["draft:1"],
+    }
+    return {
+        "receipt_id": f"receipt:{identity}",
+        "decision_identity": identity,
+        "parent_receipt": {
+            "reference": f"checkpoint:{identity}",
+            "validator": "root_parent",
+            "validated_decision_identity": identity,
+        },
+        "normalized_decision": decision,
+    }
+
+def mutation_admission():
+    target = {"identity": "draft:1", "version": "v7", "state": "ready"}
+    return {
+        "mutation_id": "integrate-draft",
+        "action": "integrate",
+        "target_state": "integrated",
+        "targets": [target],
+        "fixed_predicate": {
+            "identity": "selected-draft",
+            "selection_fields": ["identity", "version", "state"],
+            "classification_fields": ["content"],
+            "content_fields": ["content"],
+            "aggregate_scope": {
+                "identity": "aggregate:selected-drafts",
+                "target_ids": ["draft:1"],
+                "requires_complete_set": False,
+            },
+        },
+        "acceptance_path": {
+            "canonical_identity": {
+                "tool_contract": {
+                    "reference": "tool:repository-read:v1",
+                    "digest": "sha256:repository-read-v1",
+                },
+                "target_bindings": [
+                    {
+                        "identity": "draft:1",
+                        "version": "v7",
+                        "state": "ready",
+                        "locator": "identity:draft:1",
+                    }
+                ],
+            },
+            "complete_pre_state": {
+                "tool_contract": {
+                    "reference": "tool:repository-read:v1",
+                    "digest": "sha256:repository-read-v1",
+                },
+                "target_bindings": [
+                    {
+                        "identity": "draft:1",
+                        "version": "v7",
+                        "state": "ready",
+                        "locator": "read:draft:1@v7",
+                    }
+                ],
+            },
+            "authoritative_receipt": {
+                "tool_contract": {
+                    "reference": "tool:repository-write:v1",
+                    "digest": "sha256:repository-write-v1",
+                },
+                "target_bindings": [
+                    {
+                        "identity": "draft:1",
+                        "version": "v7",
+                        "state": "ready",
+                        "locator": "receipt:commit-result",
+                    }
+                ],
+            },
+            "independent_post_state": {
+                "tool_contract": {
+                    "reference": "tool:repository-read:v1",
+                    "digest": "sha256:repository-read-v1",
+                },
+                "target_bindings": [
+                    {
+                        "identity": "draft:1",
+                        "version": "v7",
+                        "state": "ready",
+                        "locator": "root-read:draft:1",
+                    }
+                ],
+                "actor": "root",
+            },
+        },
+        "transport_proof": {
+            "proof_id": "transport:integrate-draft",
+            "mutation_id": "integrate-draft",
+            "capability": "cursor_page",
+            "requested_scope": ["draft:1"],
+            "returned_scope": ["draft:1"],
+            "required_fields": ["identity", "version", "state", "content"],
+            "content_fields": ["content"],
+            "aggregate_scope": {
+                "identity": "aggregate:selected-drafts",
+                "target_ids": ["draft:1"],
+                "requires_complete_set": False,
+            },
+            "field_coverage": [
+                {
+                    "item_id": "draft:1",
+                    "field": "identity",
+                    "kind": "complete_field",
+                    "locator": "read:draft:1:identity",
+                },
+                {
+                    "item_id": "draft:1",
+                    "field": "version",
+                    "kind": "complete_field",
+                    "locator": "read:draft:1:version",
+                },
+                {
+                    "item_id": "draft:1",
+                    "field": "state",
+                    "kind": "complete_field",
+                    "locator": "read:draft:1:state",
+                },
+                {
+                    "item_id": "draft:1",
+                    "field": "content",
+                    "kind": "gap_free_content",
+                    "locator": "read:draft:1:content",
+                    "total_length": 12,
+                    "ranges": [[0, 12]],
+                },
+            ],
+            "pages": [
+                {
+                    "cursor": "start",
+                    "next_cursor": None,
+                    "target_ids": ["draft:1"],
+                }
+            ],
+            "action": "integrate",
+            "target_state": "integrated",
+            "predicate_identity": "selected-draft",
+            "target_bindings": [
+                {"identity": "draft:1", "version": "v7", "state": "ready"}
+            ],
+            "terminal_witness": {
+                "kind": "cursor_exhausted",
+                "locator": "read:draft:1:page:1",
+            },
+            "signals": [],
+            "recovery_attempts": [],
+            "recovery_seed": {
+                "request_fingerprint": "cursor:failed",
+                "completed_units": 0,
+                "remaining_units": 2,
+            },
+        },
+        "security_gate": {
+            "transport_proof_id": "transport:integrate-draft",
+            "binding": classification_binding([target]),
+            "item_classifications": [
+                {
+                    "item_id": "draft:1",
+                    "result": "unprotected",
+                    "categories": [],
+                    "evidence": ["classifier:draft:1"],
+                    "deterministic_markers": [],
+                    "uncertainty": [],
+                    "expiry": [],
+                    "input_binding": classification_binding([target], target),
+                }
+            ],
+            "action_classification": {
+                "result": "unprotected",
+                "categories": [],
+                "evidence": ["classifier:integrate"],
+                "deterministic_markers": [],
+                "uncertainty": [],
+                "expiry": [],
+                "input_binding": classification_binding([target]),
+            },
+            "authorization": None,
+            "item_level_execution": True,
+            "uncoupled": True,
+        },
+    }
+
 def review(design_digest="sha256:design-7", verdict="pass", repair_count=0):
     return {
         "design_revision": 7,
@@ -64,6 +280,7 @@ def finding(classification="must-fix", disposition="unresolved"):
 
 def metadata():
     return {
+        "queue_revision": 11,
         "revision": 7,
         "authority_preflight": {
             "revision": 7,
@@ -77,6 +294,7 @@ def metadata():
             "evidence": ["evidence:preflight"],
         },
         "observed_effects": ["effect:read-complete"],
+        "mutation_admission": mutation_admission(),
         "design_digest": "sha256:design-7",
         "design_review": review(),
     }
@@ -534,7 +752,747 @@ def contradict_family(manifest):
     return manifest
 
 
+def add_admission_target(fixture, identity="draft:2", version="v4", state="ready"):
+    proposal = fixture["mutation_admission"]
+    target = {"identity": identity, "version": version, "state": state}
+    proposal["targets"].append(target)
+    for name, capability in proposal["acceptance_path"].items():
+        capability["target_bindings"].append(
+            {**target, "locator": f"{name}:{identity}"}
+        )
+    proposal["fixed_predicate"]["aggregate_scope"]["target_ids"].append(identity)
+    proposal["transport_proof"]["aggregate_scope"]["target_ids"].append(identity)
+
+    proof = proposal["transport_proof"]
+    proof["target_bindings"].append(target)
+    proof["requested_scope"].append(identity)
+    proof["returned_scope"].append(identity)
+    for field in proposal["transport_proof"]["required_fields"]:
+        coverage = {
+            "item_id": identity,
+            "field": field,
+            "kind": "complete_field",
+            "locator": f"read:{identity}:{field}",
+        }
+        if field in proposal["fixed_predicate"]["content_fields"]:
+            coverage.update(
+                {
+                    "kind": "gap_free_content",
+                    "total_length": 12,
+                    "ranges": [[0, 12]],
+                }
+            )
+        proposal["transport_proof"]["field_coverage"].append(coverage)
+    proof["pages"][0]["target_ids"].append(identity)
+
+    security = proposal["security_gate"]
+    security["binding"] = classification_binding(proposal["targets"])
+    for item in security["item_classifications"]:
+        item_target = next(
+            candidate
+            for candidate in proposal["targets"]
+            if candidate["identity"] == item["item_id"]
+        )
+        item["input_binding"] = classification_binding(
+            proposal["targets"], item_target
+        )
+    security["item_classifications"].append(
+        {
+            "item_id": identity,
+            "result": "unprotected",
+            "categories": [],
+            "evidence": [f"classifier:{identity}"],
+            "deterministic_markers": [],
+            "uncertainty": [],
+            "expiry": [],
+            "input_binding": classification_binding(proposal["targets"], target),
+        }
+    )
+    security["action_classification"]["input_binding"] = classification_binding(
+        proposal["targets"]
+    )
+
+
 class RootWorkflowTests(unittest.TestCase):
+    def test_complete_transport_and_unprotected_classification_admit_mutation(self):
+        result = evaluate_root_workflow(metadata())
+
+        self.assertEqual(
+            result["mutation_admission"],
+            {
+                "mutation_id": "integrate-draft",
+                "status": "allow",
+                "evaluated_gates": [
+                    "transport",
+                    "classification",
+                    "authorization",
+                    "mutation",
+                ],
+                "allowed_items": ["draft:1"],
+                "blocked_items": [],
+                "reasons": [],
+            },
+        )
+        self.assertTrue(result["execution_permission"]["root_mutation"])
+
+    def test_transport_capabilities_require_positive_terminal_witnesses(self):
+        valid_witnesses = {
+            "bounded_list": {
+                "kind": "authoritative_total",
+                "total": 1,
+                "locator": "read:drafts:total",
+            },
+            "object_blob": {
+                "kind": "complete_content",
+                "length": 12,
+                "checksum": "sha256:draft",
+                "locator": "read:draft:1",
+            },
+            "range": {
+                "kind": "gap_free_ranges",
+                "total_length": 12,
+                "ranges": [[0, 5], [5, 12]],
+                "locator": "read:draft:1:ranges",
+            },
+        }
+        for capability, witness in valid_witnesses.items():
+            with self.subTest(capability=capability):
+                fixture = metadata()
+                proof = fixture["mutation_admission"]["transport_proof"]
+                proof["capability"] = capability
+                proof["terminal_witness"] = witness
+                self.assertEqual(
+                    evaluate_root_workflow(fixture)["mutation_admission"]["status"],
+                    "allow",
+                )
+
+        for boundary in (
+            {"complete_marker": "complete"},
+            {"length": 12},
+            {"checksum": "sha256:draft"},
+        ):
+            with self.subTest(object_boundary=boundary):
+                fixture = metadata()
+                fixture["mutation_admission"]["transport_proof"][
+                    "capability"
+                ] = "object_blob"
+                fixture["mutation_admission"]["transport_proof"][
+                    "terminal_witness"
+                ] = {
+                    "kind": "complete_content",
+                    "locator": "read:draft:1",
+                    **boundary,
+                }
+                self.assertEqual(
+                    evaluate_root_workflow(fixture)["mutation_admission"]["status"],
+                    "allow",
+                )
+
+        short_page = metadata()
+        short_page_proof = short_page["mutation_admission"]["transport_proof"]
+        short_page_proof["capability"] = "bounded_list"
+        short_page_proof["terminal_witness"] = {
+            "kind": "documented_short_page_terminal",
+            "locator": "read:drafts:page:1",
+            "tool_contract": {
+                "reference": "tool:bounded-list:v1",
+                "digest": "sha256:bounded-list-v1",
+                "short_page_rule": "returned_count_lt_page_limit",
+            },
+            "returned_count": 1,
+            "page_limit": 50,
+        }
+        self.assertEqual(
+            evaluate_root_workflow(short_page)["mutation_admission"]["status"],
+            "allow",
+        )
+
+        missing_contract = copy.deepcopy(short_page)
+        del missing_contract["mutation_admission"]["transport_proof"][
+            "terminal_witness"
+        ]["tool_contract"]
+        self.assertEqual(
+            evaluate_root_workflow(missing_contract)["mutation_admission"][
+                "status"
+            ],
+            "blocked",
+        )
+
+        not_short = copy.deepcopy(short_page)
+        not_short["mutation_admission"]["transport_proof"]["terminal_witness"][
+            "returned_count"
+        ] = 50
+        self.assertEqual(
+            evaluate_root_workflow(not_short)["mutation_admission"]["status"],
+            "blocked",
+        )
+
+        cursor_chain = metadata()
+        pages = cursor_chain["mutation_admission"]["transport_proof"]["pages"]
+        pages[0]["next_cursor"] = "page:2"
+        pages.append(
+            {"cursor": "page:2", "next_cursor": None, "target_ids": []}
+        )
+        self.assertEqual(
+            evaluate_root_workflow(cursor_chain)["mutation_admission"]["status"],
+            "allow",
+        )
+        pages[1]["cursor"] = "skipped"
+        self.assertEqual(
+            evaluate_root_workflow(cursor_chain)["mutation_admission"]["status"],
+            "blocked",
+        )
+
+        invalid_witnesses = {
+            "opaque display": ("opaque_display_only", {"kind": "visible"}),
+            "warning": (
+                "cursor_page",
+                {"kind": "cursor_exhausted", "locator": "read:draft:1:page:1"},
+            ),
+            "naked completeness": ("object_blob", {"complete": True}),
+            "unsupported short page": (
+                "bounded_list",
+                {"kind": "short_page", "count": 1},
+            ),
+            "byte gap": (
+                "range",
+                {
+                    "kind": "gap_free_ranges",
+                    "total_length": 12,
+                    "ranges": [[0, 5], [6, 12]],
+                    "locator": "read:draft:1:ranges",
+                },
+            ),
+        }
+        for name, (capability, witness) in invalid_witnesses.items():
+            with self.subTest(name=name):
+                fixture = metadata()
+                proof = fixture["mutation_admission"]["transport_proof"]
+                proof["capability"] = capability
+                proof["terminal_witness"] = witness
+                if name == "warning":
+                    proof["signals"] = [
+                        {"scope": "draft:1", "kind": "truncation_warning"}
+                    ]
+                result = evaluate_root_workflow(fixture)
+                self.assertEqual(result["mutation_admission"]["status"], "blocked")
+                self.assertEqual(
+                    result["mutation_admission"]["evaluated_gates"], ["transport"]
+                )
+                self.assertFalse(result["execution_permission"]["root_mutation"])
+
+    def test_transport_scope_binding_and_localized_incompleteness(self):
+        invalid_bindings = {}
+
+        invalid_bindings["acceptance path"] = metadata()
+        del invalid_bindings["acceptance path"]["mutation_admission"][
+            "acceptance_path"
+        ]["independent_post_state"]
+
+        invalid_bindings["receipt as post-state"] = metadata()
+        acceptance = invalid_bindings["receipt as post-state"][
+            "mutation_admission"
+        ]["acceptance_path"]
+        acceptance["independent_post_state"]["target_bindings"][0][
+            "locator"
+        ] = acceptance["authoritative_receipt"]["target_bindings"][0]["locator"]
+
+        invalid_bindings["capability provenance"] = metadata()
+        del invalid_bindings["capability provenance"]["mutation_admission"][
+            "acceptance_path"
+        ]["complete_pre_state"]["tool_contract"]["digest"]
+
+        invalid_bindings["per-target capability binding"] = metadata()
+        invalid_bindings["per-target capability binding"]["mutation_admission"][
+            "acceptance_path"
+        ]["canonical_identity"]["target_bindings"] = []
+
+        invalid_bindings["mutation"] = metadata()
+        invalid_bindings["mutation"]["mutation_admission"]["transport_proof"][
+            "mutation_id"
+        ] = "other"
+
+        invalid_bindings["fields"] = metadata()
+        invalid_bindings["fields"]["mutation_admission"]["transport_proof"][
+            "required_fields"
+        ].remove("content")
+
+        invalid_bindings["scope"] = metadata()
+        invalid_bindings["scope"]["mutation_admission"]["transport_proof"][
+            "returned_scope"
+        ] = []
+
+        invalid_bindings["target version"] = metadata()
+        del invalid_bindings["target version"]["mutation_admission"]["targets"][0][
+            "version"
+        ]
+
+        for name, fixture in invalid_bindings.items():
+            with self.subTest(name=name):
+                admission = evaluate_root_workflow(fixture)["mutation_admission"]
+                self.assertEqual(admission["status"], "blocked")
+                self.assertEqual(admission["evaluated_gates"], ["transport"])
+
+        localized = metadata()
+        add_admission_target(localized)
+        proof = localized["mutation_admission"]["transport_proof"]
+        proof["signals"] = [
+            {"scope": "draft:1", "kind": "truncation_warning"}
+        ]
+
+        partitioned = evaluate_root_workflow(localized)
+        self.assertEqual(partitioned["mutation_admission"]["status"], "allow")
+        self.assertEqual(
+            partitioned["mutation_admission"]["allowed_items"], ["draft:2"]
+        )
+        self.assertEqual(
+            partitioned["mutation_admission"]["blocked_items"], ["draft:1"]
+        )
+
+        generic = copy.deepcopy(localized)
+        generic["mutation_admission"]["transport_proof"]["signals"][0][
+            "scope"
+        ] = "call"
+        generic_result = evaluate_root_workflow(generic)
+        self.assertEqual(generic_result["mutation_admission"]["status"], "blocked")
+        self.assertEqual(
+            generic_result["mutation_admission"]["blocked_items"],
+            ["draft:1", "draft:2"],
+        )
+
+        aggregate = copy.deepcopy(localized)
+        aggregate["mutation_admission"]["fixed_predicate"]["aggregate_scope"][
+            "requires_complete_set"
+        ] = True
+        aggregate["mutation_admission"]["transport_proof"]["aggregate_scope"][
+            "requires_complete_set"
+        ] = True
+        aggregate_result = evaluate_root_workflow(aggregate)
+        self.assertEqual(
+            aggregate_result["mutation_admission"]["status"], "blocked"
+        )
+
+        missing_aggregate_scope = metadata()
+        del missing_aggregate_scope["mutation_admission"]["fixed_predicate"][
+            "aggregate_scope"
+        ]
+        del missing_aggregate_scope["mutation_admission"]["transport_proof"][
+            "aggregate_scope"
+        ]
+        self.assertEqual(
+            evaluate_root_workflow(missing_aggregate_scope)[
+                "mutation_admission"
+            ]["status"],
+            "blocked",
+        )
+
+
+
+    def test_every_predicate_field_has_per_target_complete_coverage(self):
+        missing_field = metadata()
+        missing_field["mutation_admission"]["transport_proof"][
+            "field_coverage"
+        ].pop()
+        self.assertEqual(
+            evaluate_root_workflow(missing_field)["mutation_admission"]["status"],
+            "blocked",
+        )
+
+        byte_gap = metadata()
+        content = byte_gap["mutation_admission"]["transport_proof"][
+            "field_coverage"
+        ][-1]
+        content["ranges"] = [[0, 5], [6, 12]]
+        self.assertEqual(
+            evaluate_root_workflow(byte_gap)["mutation_admission"]["status"],
+            "blocked",
+        )
+
+        for key, value in (("item_id", []), ("field", {})):
+            with self.subTest(malformed_coverage_key=key):
+                malformed = metadata()
+                malformed["mutation_admission"]["transport_proof"][
+                    "field_coverage"
+                ][0][key] = value
+                self.assertEqual(
+                    evaluate_root_workflow(malformed)["mutation_admission"][
+                        "status"
+                    ],
+                    "blocked",
+                )
+
+    def test_recovery_requires_progress_and_returns_bounded_forensics(self):
+        fixture = metadata()
+        proof = fixture["mutation_admission"]["transport_proof"]
+        proof["pages"][0]["next_cursor"] = "next"
+        proof["recovery_bound"] = 2
+        proof["recovery_attempts"] = [
+            {
+                "request_fingerprint": "cursor:next",
+                "completed_units": 1,
+                "remaining_units": 1,
+            },
+            {
+                "request_fingerprint": "cursor:next",
+                "completed_units": 1,
+                "remaining_units": 1,
+            },
+        ]
+        proof["forensics"] = {
+            "cap_bytes": 64,
+            "last_raw": "truncated page",
+            "completed_evidence": ["read:draft:1:page:1"],
+            "live_handles": ["cursor:next"],
+            "failed_scope": ["draft:1"],
+            "signals": [],
+        }
+        proof["unblock_condition"] = "Obtain the authoritative terminal page."
+
+        blocked = evaluate_root_workflow(fixture)["mutation_admission"]
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertIn("repeated_incomplete_input", blocked["reasons"])
+        self.assertEqual(blocked["recovery_attempts"], proof["recovery_attempts"])
+        self.assertEqual(blocked["forensics"], proof["forensics"])
+        self.assertEqual(
+            blocked["unblock_condition"],
+            "Obtain the authoritative terminal page.",
+        )
+
+        no_progress = copy.deepcopy(fixture)
+        no_progress_attempts = no_progress["mutation_admission"][
+            "transport_proof"
+        ]["recovery_attempts"]
+        no_progress_attempts[1]["request_fingerprint"] = "cursor:smaller-page"
+        no_progress_result = evaluate_root_workflow(no_progress)[
+            "mutation_admission"
+        ]
+        self.assertIn("recovery_no_progress", no_progress_result["reasons"])
+
+        over_bound = copy.deepcopy(no_progress)
+        over_bound["mutation_admission"]["transport_proof"]["recovery_bound"] = 1
+        over_bound_result = evaluate_root_workflow(over_bound)["mutation_admission"]
+        self.assertIn("recovery_bound_exceeded", over_bound_result["reasons"])
+
+        first_repeat = metadata()
+        first_repeat["mutation_admission"]["transport_proof"][
+            "recovery_attempts"
+        ] = [
+            {
+                "request_fingerprint": "cursor:failed",
+                "completed_units": 1,
+                "remaining_units": 1,
+            }
+        ]
+        self.assertIn(
+            "repeated_incomplete_input",
+            evaluate_root_workflow(first_repeat)["mutation_admission"]["reasons"],
+        )
+
+        first_no_progress = metadata()
+        first_no_progress["mutation_admission"]["transport_proof"][
+            "recovery_attempts"
+        ] = [
+            {
+                "request_fingerprint": "cursor:alternate",
+                "completed_units": 0,
+                "remaining_units": 2,
+            }
+        ]
+        self.assertIn(
+            "recovery_no_progress",
+            evaluate_root_workflow(first_no_progress)[
+                "mutation_admission"
+            ]["reasons"],
+        )
+
+        monotonic = metadata()
+        monotonic["mutation_admission"]["transport_proof"][
+            "recovery_attempts"
+        ] = [
+            {
+                "request_fingerprint": "cursor:first",
+                "completed_units": 1,
+                "remaining_units": 1,
+            },
+            {
+                "request_fingerprint": "cursor:second",
+                "completed_units": 2,
+                "remaining_units": 0,
+            },
+        ]
+        self.assertEqual(
+            evaluate_root_workflow(monotonic)["mutation_admission"]["status"],
+            "allow",
+        )
+
+    def test_forensics_cap_rejects_self_attested_unbounded_raw_output(self):
+        fixture = metadata()
+        proof = fixture["mutation_admission"]["transport_proof"]
+        proof["signals"] = [{"scope": "call", "kind": "truncation_warning"}]
+        proof["forensics"] = {
+            "cap_bytes": 10**9,
+            "last_raw": "x" * 5000,
+            "completed_evidence": [],
+            "live_handles": [],
+            "failed_scope": ["draft:1"],
+            "signals": proof["signals"],
+        }
+        blocked = evaluate_root_workflow(fixture)["mutation_admission"]
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertIn("forensics_incomplete", blocked["reasons"])
+        self.assertEqual(blocked["forensics"]["cap_bytes"], 0)
+
+    def test_forensics_accepts_harness_truncation_suffix(self):
+        fixture = metadata()
+        proof = fixture["mutation_admission"]["transport_proof"]
+        proof["signals"] = [{"scope": "call", "kind": "truncation_warning"}]
+        prefix = "x" * 2000
+        proof["forensics"] = {
+            "cap_bytes": 2000,
+            "last_raw": f"{prefix} … [truncated 5000 chars]",
+            "completed_evidence": [],
+            "live_handles": [],
+            "failed_scope": ["draft:1"],
+            "signals": proof["signals"],
+        }
+        blocked = evaluate_root_workflow(fixture)["mutation_admission"]
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertNotIn("forensics_incomplete", blocked["reasons"])
+        self.assertEqual(blocked["forensics"]["last_raw"], proof["forensics"]["last_raw"])
+
+    def test_protected_domains_require_exact_current_authorization(self):
+        categories = [
+            "security_account_control",
+            "identity_official_status",
+            "financial_assets_obligations",
+            "legal_rights_obligations",
+            "health_medical_care",
+            "physical_safety_emergency",
+            "privacy_consent_data_control",
+            "high_impact_eligibility_essential_services",
+        ]
+        for category in categories:
+            with self.subTest(category=category):
+                fixture = metadata()
+                item = fixture["mutation_admission"]["security_gate"][
+                    "item_classifications"
+                ][0]
+                item.update(
+                    {
+                        "result": "protected",
+                        "categories": [category],
+                        "deterministic_markers": [f"marker:{category}"],
+                    }
+                )
+                fixture["mutation_admission"]["security_gate"][
+                    "authorization"
+                ] = parent_authorization(f"decision:11:{category}")
+                self.assertEqual(
+                    evaluate_root_workflow(fixture)["mutation_admission"]["status"],
+                    "allow",
+                )
+
+        blocked = metadata()
+        item = blocked["mutation_admission"]["security_gate"][
+            "item_classifications"
+        ][0]
+        item.update(
+            {
+                "result": "uncertain",
+                "categories": ["security_account_control"],
+                "uncertainty": ["conflicting initiator", "missing content"],
+                "expiry": ["expired"],
+                "model_confidence": 1.0,
+            }
+        )
+        result = evaluate_root_workflow(blocked)["mutation_admission"]
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(
+            result["evaluated_gates"],
+            ["transport", "classification", "authorization"],
+        )
+
+        authorized = copy.deepcopy(blocked)
+        authorized["mutation_admission"]["security_gate"][
+            "authorization"
+        ] = parent_authorization("decision:11:2")
+        self.assertEqual(
+            evaluate_root_workflow(authorized)["mutation_admission"]["status"],
+            "allow",
+        )
+
+        missing_current_revision = copy.deepcopy(authorized)
+        del missing_current_revision["queue_revision"]
+        del missing_current_revision["mutation_admission"]["security_gate"][
+            "authorization"
+        ]["normalized_decision"]["queue_revision"]
+        self.assertEqual(
+            evaluate_root_workflow(missing_current_revision)[
+                "mutation_admission"
+            ]["status"],
+            "blocked",
+        )
+
+        mismatches = {
+            "stale revision": ("queue_revision", 10),
+            "mutation": ("mutation_id", "other"),
+            "action": ("action", "archive"),
+            "state": ("target_state", "archived"),
+            "scope": ("item_ids", ["draft:2"]),
+        }
+        for name, (field, value) in mismatches.items():
+            with self.subTest(name=name):
+                fixture = copy.deepcopy(authorized)
+                fixture["mutation_admission"]["security_gate"]["authorization"][
+                    "normalized_decision"
+                ][field] = value
+                self.assertEqual(
+                    evaluate_root_workflow(fixture)["mutation_admission"]["status"],
+                    "blocked",
+                )
+
+        unvalidated = copy.deepcopy(authorized)
+        unvalidated["mutation_admission"]["security_gate"]["authorization"][
+            "parent_receipt"
+        ]["validator"] = "worker"
+        self.assertEqual(
+            evaluate_root_workflow(unvalidated)["mutation_admission"]["status"],
+            "blocked",
+        )
+
+        identity_mismatch = copy.deepcopy(authorized)
+        identity_mismatch["mutation_admission"]["security_gate"][
+            "authorization"
+        ]["normalized_decision"]["identity"] = "decision:other"
+        self.assertEqual(
+            evaluate_root_workflow(identity_mismatch)["mutation_admission"][
+                "status"
+            ],
+            "blocked",
+        )
+
+        fixture = metadata()
+        add_admission_target(fixture)
+        proposed = fixture["mutation_admission"]
+        proposed["security_gate"]["item_classifications"][0].update(
+            {
+                "result": "protected",
+                "categories": ["security_account_control"],
+                "deterministic_markers": ["marker:account"],
+            }
+        )
+        partitioned = evaluate_root_workflow(fixture)["mutation_admission"]
+        self.assertEqual(partitioned["status"], "allow")
+        self.assertEqual(partitioned["allowed_items"], ["draft:2"])
+        self.assertEqual(partitioned["blocked_items"], ["draft:1"])
+
+        coupled = copy.deepcopy(fixture)
+        coupled["mutation_admission"]["security_gate"]["uncoupled"] = False
+        coupled_result = evaluate_root_workflow(coupled)["mutation_admission"]
+        self.assertEqual(coupled_result["status"], "blocked")
+        self.assertEqual(
+            coupled_result["blocked_items"], ["draft:1", "draft:2"]
+        )
+
+    def test_item_action_predicate_and_scope_changes_restart_the_gate(self):
+        changes = {}
+
+        changes["mutation"] = metadata()
+        proposal = changes["mutation"]["mutation_admission"]
+        proposal["mutation_id"] = "other"
+        proposal["transport_proof"]["mutation_id"] = "other"
+
+        changes["action"] = metadata()
+        changes["action"]["mutation_admission"]["action"] = "archive"
+
+        changes["target state"] = metadata()
+        changes["target state"]["mutation_admission"]["target_state"] = "archived"
+
+        changes["predicate"] = metadata()
+        changes["predicate"]["mutation_admission"]["fixed_predicate"][
+            "identity"
+        ] = "other-predicate"
+
+        changes["item version"] = metadata()
+        changes["item version"]["mutation_admission"]["targets"][0][
+            "version"
+        ] = "v8"
+
+        for name, fixture in changes.items():
+            with self.subTest(name=name):
+                result = evaluate_root_workflow(fixture)["mutation_admission"]
+                self.assertEqual(result["status"], "blocked")
+                self.assertEqual(result["evaluated_gates"], ["transport"])
+
+        reclassified = metadata()
+        reclassified["mutation_admission"]["security_gate"][
+            "item_classifications"
+        ][0].update(
+            {
+                "result": "protected",
+                "categories": ["privacy_consent_data_control"],
+                "deterministic_markers": ["marker:privacy"],
+            }
+        )
+        reclassified_result = evaluate_root_workflow(reclassified)[
+            "mutation_admission"
+        ]
+        self.assertEqual(
+            reclassified_result["evaluated_gates"],
+            ["transport", "classification", "authorization"],
+        )
+
+        stale_classification = metadata()
+        stale_classification["mutation_admission"]["action"] = "archive"
+        proof = stale_classification["mutation_admission"]["transport_proof"]
+        proof["action"] = "archive"
+        security = stale_classification["mutation_admission"]["security_gate"]
+        security["authorization"] = None
+        stale_result = evaluate_root_workflow(stale_classification)[
+            "mutation_admission"
+        ]
+        self.assertEqual(stale_result["status"], "blocked")
+        self.assertEqual(
+            stale_result["evaluated_gates"], ["transport", "classification"]
+        )
+
+        unsupported = metadata()
+        unsupported["mutation_admission"]["security_gate"][
+            "item_classifications"
+        ][0]["evidence"] = []
+        unsupported_result = evaluate_root_workflow(unsupported)[
+            "mutation_admission"
+        ]
+        self.assertEqual(unsupported_result["status"], "blocked")
+        self.assertEqual(
+            unsupported_result["evaluated_gates"], ["transport", "classification"]
+        )
+
+        missing_proof_id = metadata()
+        del missing_proof_id["mutation_admission"]["transport_proof"]["proof_id"]
+        missing_proof_id["mutation_admission"]["security_gate"][
+            "transport_proof_id"
+        ] = None
+        self.assertEqual(
+            evaluate_root_workflow(missing_proof_id)["mutation_admission"][
+                "status"
+            ],
+            "blocked",
+        )
+
+        stale_item_binding = metadata()
+        stale_item_binding["mutation_admission"]["security_gate"][
+            "item_classifications"
+        ][0]["input_binding"]["target_binding"]["version"] = "v6"
+        stale_item_result = evaluate_root_workflow(stale_item_binding)[
+            "mutation_admission"
+        ]
+        self.assertEqual(stale_item_result["status"], "blocked")
+        self.assertEqual(
+            stale_item_result["evaluated_gates"], ["transport", "classification"]
+        )
+
+
     def test_safety_precedes_complexity_without_forbidding_isolated_drafts(self):
         delegated = evaluate_root_workflow(metadata())
         self.assertEqual(delegated["selected_topology"], "L1")
@@ -555,6 +1513,64 @@ class RootWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(interactive["execution_permission"]["delegated_work"])
         self.assertEqual(interactive["workflow_state"], {"state": "continue", "final": False})
+
+        blocked_mutation = metadata()
+        blocked_mutation["mutation_admission"]["transport_proof"]["signals"] = [
+            {"scope": "call", "kind": "truncation_warning"}
+        ]
+        blocked_result = evaluate_root_workflow(blocked_mutation)
+        self.assertFalse(blocked_result["execution_permission"]["root_mutation"])
+        self.assertTrue(blocked_result["execution_permission"]["delegated_work"])
+        self.assertEqual(
+            blocked_result["mutation_admission"]["status"], "blocked"
+        )
+        self.assertEqual(
+            blocked_result["workflow_state"], {"state": "continue", "final": False}
+        )
+
+        waiting_on_human = evaluate_root_workflow(
+            blocked_mutation,
+            [{"type": "human_decision_required", "path": "approval"}],
+        )
+        self.assertEqual(
+            waiting_on_human["workflow_state"],
+            {"state": "human_decision_required", "final": False},
+        )
+
+        no_proposal = metadata()
+        del no_proposal["mutation_admission"]
+        no_proposal_result = evaluate_root_workflow(no_proposal)
+        self.assertFalse(no_proposal_result["execution_permission"]["root_mutation"])
+        self.assertTrue(no_proposal_result["execution_permission"]["delegated_work"])
+
+    def test_blocked_mutation_is_not_final_for_l0_and_repair(self):
+        l0 = metadata()
+        l0["authority_preflight"]["generic_topology"] = "L0"
+        l0["authority_preflight"]["workers"] = []
+        l0["mutation_admission"]["transport_proof"]["signals"] = [
+            {"scope": "call", "kind": "truncation_warning"}
+        ]
+        l0_result = evaluate_root_workflow(l0)
+        self.assertEqual(l0_result["selected_topology"], "L0")
+        self.assertEqual(
+            l0_result["workflow_state"], {"state": "continue", "final": False}
+        )
+        self.assertFalse(l0_result["execution_permission"]["root_mutation"])
+        self.assertFalse(l0_result["execution_permission"]["delegated_work"])
+
+        repair = metadata()
+        repair["design_review"]["independent_review"]["verdict"] = "repair"
+        repair["design_review"]["independent_review"]["findings"] = [finding()]
+        repair["mutation_admission"]["transport_proof"]["signals"] = [
+            {"scope": "call", "kind": "truncation_warning"}
+        ]
+        repair_result = evaluate_root_workflow(repair)
+        self.assertEqual(repair_result["review_gate"]["status"], "repair_required")
+        self.assertEqual(
+            repair_result["workflow_state"], {"state": "continue", "final": False}
+        )
+        self.assertFalse(repair_result["execution_permission"]["root_mutation"])
+        self.assertFalse(repair_result["execution_permission"]["delegated_work"])
 
     def test_exact_revision_independent_review_gates_authority_bearing_design(self):
         admitted = evaluate_root_workflow(metadata())
@@ -631,7 +1647,6 @@ class RootWorkflowTests(unittest.TestCase):
         self.assertEqual(
             read_only_result["workflow_state"], {"state": "continue", "final": False}
         )
-
     def test_invalid_preflight_matrix_fails_closed(self):
         fixtures = {}
 
@@ -848,6 +1863,37 @@ class RootWorkflowTests(unittest.TestCase):
         self.assertFalse(reproved["execution_permission"]["delegated_mutation"])
         self.assertIn("evidence:preflight", reproved["retained_evidence"])
 
+
+        discovered_metadata = metadata()
+        proposal = discovered_metadata["mutation_admission"]
+        proposal["mutation_id"] = "publish-draft"
+        proof = proposal["transport_proof"]
+        proof["proof_id"] = "transport:publish-draft"
+        proof["mutation_id"] = "publish-draft"
+        security = proposal["security_gate"]
+        security["transport_proof_id"] = "transport:publish-draft"
+        bindings = [
+            security["binding"],
+            security["action_classification"]["input_binding"],
+            *[
+                item["input_binding"]
+                for item in security["item_classifications"]
+            ],
+        ]
+        for binding in bindings:
+            binding["transport_proof_id"] = "transport:publish-draft"
+            binding["mutation_id"] = "publish-draft"
+
+        discovered = evaluate_root_workflow(
+            discovered_metadata, [reproved_discovery]
+        )
+        self.assertEqual(
+            discovered["mutation_admission"]["status"], "allow"
+        )
+        self.assertEqual(
+            discovered["mutation_admission"]["mutation_id"], "publish-draft"
+        )
+        self.assertTrue(discovered["execution_permission"]["root_mutation"])
         parallel_metadata = metadata()
         parallel_metadata["authority_preflight"]["workers"].append(worker("reviewer"))
         writer_reproof = copy.deepcopy(reproved_discovery)
