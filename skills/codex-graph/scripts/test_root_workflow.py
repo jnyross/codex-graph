@@ -2134,6 +2134,35 @@ class RootWorkflowTests(unittest.TestCase):
                     {"state": "accepted", "final": True},
                 )
 
+    def test_blocked_target_is_not_recorded_as_accepted(self):
+        """A blocked target must not keep an untrusted 'accepted' label in the reconciliation."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        target_id = target["canonical_target_id"]
+        del target["receipt_ref"]
+        del target["post_ref"]
+        manifest["evidence"]["actions"] = []
+        manifest["evidence"]["post"] = []
+        for name in ("attempted", "receipt_resolved", "post_verified"):
+            manifest["reconciliation"][name] = []
+        # reconciliation["accepted"] is intentionally left populated with the untrusted claim.
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"], {"state": "blocked", "final": True}
+        )
+        self.assertNotIn(
+            target_id,
+            result["acceptance_manifest"]["reconciliation"]["accepted"],
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["reconciliation"]["derived_counts"][
+                "accepted"
+            ],
+            0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

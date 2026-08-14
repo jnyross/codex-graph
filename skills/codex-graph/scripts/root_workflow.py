@@ -1549,6 +1549,18 @@ def _evaluate_acceptance_manifest(
         "unauthorized": 4,
         "duplicates": 5,
     }
+    computed_status = {
+        "accepted": "accepted",
+        "indeterminate": "unknown",
+        "failed": "failed",
+        "blocked": "skipped",
+    }
+    computed_rank = {
+        "accepted": 1,
+        "unknown": 2,
+        "failed": 3,
+        "blocked": 4,
+    }
     outcome_priority = {}
     for name in (
         "skipped",
@@ -1563,13 +1575,10 @@ def _evaluate_acceptance_manifest(
             if previous is None or outcome_rank[name] > outcome_rank[previous]:
                 outcome_priority[target_id] = name
     for target_id, target_status in statuses.items():
-        computed = {
-            "accepted": "accepted",
-            "indeterminate": "unknown",
-            "failed": "failed",
-        }.get(target_status, "skipped")
+        computed = computed_status.get(target_status, "skipped")
+        rank = computed_rank.get(target_status, outcome_rank.get(computed, 0))
         previous = outcome_priority.get(target_id)
-        if previous is None or outcome_rank[computed] > outcome_rank[previous]:
+        if previous is None or rank > outcome_rank[previous]:
             outcome_priority[target_id] = computed
     for target_id in detected_duplicates:
         outcome_priority[target_id] = "duplicates"
