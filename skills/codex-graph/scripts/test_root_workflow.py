@@ -388,6 +388,14 @@ def family_manifest(family="record_state"):
             "record_state", "leaf"
         )
         leaf["family"] = "record_state"
+        parent_mutation = target["intent"]["mutation_id"]
+        old_leaf_mutation = leaf["intent"]["mutation_id"]
+        leaf["intent"]["mutation_id"] = parent_mutation
+        for record in leaf_records.values():
+            if not isinstance(record, dict):
+                continue
+            if record.get("mutation_id") == old_leaf_mutation:
+                record["mutation_id"] = parent_mutation
         target["leaf_entries"] = [leaf]
         records.update(leaf_records)
         for name, values in leaf_evidence.items():
@@ -2099,6 +2107,32 @@ class RootWorkflowTests(unittest.TestCase):
             result["workflow_state"],
             {"state": "accepted", "final": True},
         )
+
+    def test_composite_leaf_action_and_mutation_bound(self):
+        """A composite operation's leaf entries must use the leaf family action and the parent mutation."""
+        manifest = family_manifest("operation_composite")
+        leaf = manifest["targets"][0]["leaf_entries"][0]
+
+        def result_for(mutator):
+            m = copy.deepcopy(manifest)
+            mutator(m["targets"][0]["leaf_entries"][0])
+            md = metadata()
+            md["acceptance_manifest"] = m
+            return evaluate_root_workflow(md)
+
+        def forge_action(leaf):
+            leaf["intent"]["action"] = "run_operation"
+
+        def forge_mutation(leaf):
+            leaf["intent"]["mutation_id"] = "mutation:forged"
+
+        for label, mutator in [("action", forge_action), ("mutation", forge_mutation)]:
+            with self.subTest(forgery=label):
+                result = result_for(mutator)
+                self.assertNotEqual(
+                    result["workflow_state"],
+                    {"state": "accepted", "final": True},
+                )
 
 
 if __name__ == "__main__":

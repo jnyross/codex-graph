@@ -125,6 +125,7 @@ _PROTECTED_CATEGORIES = {
 }
 _FAMILY_MATRIX = {
     "record_state": {
+        "action": "set_state",
         "pre": ("resource_id", "version", "state"),
         "receipt": ("resulting_version", "status"),
         "post": ("resource_id", "version", "state"),
@@ -141,6 +142,7 @@ _FAMILY_MATRIX = {
         "receipt_status": ("committed",),
     },
     "relationship_set": {
+        "action": "add_edge",
         "pre": ("subject_id", "relation", "object_id", "state", "set_revision"),
         "receipt": ("set_revision", "status"),
         "post": ("subject_id", "relation", "object_id", "state", "set_revision"),
@@ -159,6 +161,7 @@ _FAMILY_MATRIX = {
         "receipt_status": ("committed",),
     },
     "create_append": {
+        "action": "append",
         "pre": ("parent_id", "client_mutation_key", "key_state", "payload_digest"),
         "receipt": (
             "client_mutation_key",
@@ -181,6 +184,7 @@ _FAMILY_MATRIX = {
         "receipt_status": ("committed",),
     },
     "delete_erase": {
+        "action": "soft_delete",
         "pre": ("resource_id", "version", "state"),
         "receipt": ("deletion_generation", "status"),
         "post": ("witness", "deletion_generation"),
@@ -195,6 +199,7 @@ _FAMILY_MATRIX = {
         "receipt_status": ("committed",),
     },
     "blob_content": {
+        "action": "replace_content",
         "pre": ("object_id", "generation", "length", "digest", "ranges"),
         "receipt": ("generation", "length", "digest", "status"),
         "post": ("object_id", "generation", "length", "digest", "ranges"),
@@ -213,6 +218,7 @@ _FAMILY_MATRIX = {
         "receipt_status": ("committed",),
     },
     "operation_composite": {
+        "action": "run_operation",
         "pre": ("operation_id", "authorized_effect_ids", "effect_manifest_capability"),
         "receipt": ("operation_id", "operation_sequence", "status"),
         "post": (
@@ -742,6 +748,7 @@ def _evaluate_target(
     action_started = _target_action_started(
         target, target_id, linked, records, sets
     )
+    expected_action = exact_action if isinstance(exact_action, str) else row.get("action")
     pre_issues = []
     post_issues = []
     failures = []
@@ -787,7 +794,7 @@ def _evaluate_target(
         )
         or not isinstance(action, str)
         or not action
-        or action != exact_action
+        or action != expected_action
     ):
         pre_issues.append("malformed_exact_intent")
     expected_mutation = (
@@ -1069,12 +1076,15 @@ def _evaluate_target(
                 for name in _RECONCILIATION_SETS
             }
             leaf_intent = leaf.get("intent") if isinstance(leaf, dict) else None
+            leaf_family = leaf.get("family") if isinstance(leaf, dict) else None
             leaf_action = (
-                leaf_intent.get("action") if isinstance(leaf_intent, dict) else None
+                _FAMILY_MATRIX[leaf_family].get("action")
+                if isinstance(leaf_family, str) and leaf_family in _FAMILY_MATRIX
+                else None
             )
             leaf_result = _evaluate_target(
                 leaf,
-                leaf.get("family") if isinstance(leaf, dict) else None,
+                leaf_family,
                 leaf_action,
                 decision_ref,
                 scope_id,
@@ -1082,6 +1092,7 @@ def _evaluate_target(
                 linked,
                 records,
                 leaf_sets,
+                authorized_mutation_id=expected_mutation,
             )
             if leaf_result[0] == "failed":
                 failures.extend(leaf_result[4] or ["failed_leaf_entry"])
