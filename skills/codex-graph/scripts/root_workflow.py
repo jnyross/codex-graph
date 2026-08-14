@@ -142,11 +142,11 @@ def _terminal_complete(
                 for page in pages
             )
             and all(
-                pages[index]["cursor"] == pages[index - 1]["next_cursor"]
+                pages[index]["cursor"] == pages[index - 1].get("next_cursor")
                 for index in range(1, len(pages))
             )
             and returned_ids == target_ids
-            and pages[-1]["next_cursor"] is None
+            and pages[-1].get("next_cursor") is None
         )
     if capability == "bounded_list":
         if returned_ids != target_ids:
@@ -479,7 +479,8 @@ def _transport_gate(
             isinstance(signal, dict)
             and isinstance(signal.get("kind"), str)
             and bool(signal["kind"])
-            and signal.get("scope") in {*target_ids, "call"}
+            and isinstance(signal.get("scope"), str)
+            and signal["scope"] in {*target_ids, "call"}
             for signal in signals
         )
     )
@@ -540,7 +541,8 @@ def _transport_gate(
 def _classification_record_complete(record: object) -> bool:
     return (
         isinstance(record, dict)
-        and record.get("result") in _CLASSIFICATION_RESULTS
+        and isinstance(record.get("result"), str)
+        and record["result"] in _CLASSIFICATION_RESULTS
         and _string_list(record.get("categories"))
         and len(record["categories"]) == len(set(record["categories"]))
         and set(record["categories"]) <= _PROTECTED_CATEGORIES
@@ -632,10 +634,9 @@ def _classification_gate(
         return (
             _blocked_admission(
                 context["mutation_id"],
-                "transport",
+                "classification",
                 ["partition_not_proved"],
                 context["target_ids"],
-                context["proof"],
             ),
             {},
         )
@@ -729,6 +730,14 @@ def _authorization_gate(
         for target_id in context["candidate_ids"]
         if target_id not in blocked_items
     ]
+    if (
+        blocked_items
+        and isinstance(context.get("predicate"), dict)
+        and isinstance(context["predicate"].get("aggregate_scope"), dict)
+        and context["predicate"]["aggregate_scope"].get("requires_complete_set") is True
+    ):
+        blocked_items = context["target_ids"]
+        allowed_items = []
     if blocked_items and (
         not allowed_items or not _partitionable(classification["security"])
     ):
@@ -1116,6 +1125,7 @@ def _blocked_result(
     revision: object = None,
     review_gate: dict | None = None,
     review_checkpoint: object = None,
+    mutation_admission: dict | None = None,
 ) -> dict:
     preflight = {
         "revision": revision,
@@ -1136,6 +1146,7 @@ def _blocked_result(
         },
         "retained_evidence": retained_evidence,
         "observed_effects": observed_effects,
+        "mutation_admission": mutation_admission,
         "workflow_state": {"state": "blocked", "final": True},
         "review_gate": review_gate or {"status": "not_evaluated", "reasons": []},
         "review_checkpoint": review_checkpoint,
@@ -1579,6 +1590,8 @@ def evaluate_root_workflow(
                 mutation_blocked
                 and not delegated_work
                 and not human_decision_required
+                and not runtime_decision
+                and selected_topology != "L0"
             ),
         },
     }
