@@ -773,6 +773,22 @@ class RootWorkflowTests(unittest.TestCase):
             "allow",
         )
 
+    def test_forensics_cap_rejects_self_attested_unbounded_raw_output(self):
+        fixture = metadata()
+        proof = fixture["mutation_admission"]["transport_proof"]
+        proof["signals"] = [{"scope": "call", "kind": "truncation_warning"}]
+        proof["forensics"] = {
+            "cap_bytes": 10**9,
+            "last_raw": "x" * 5000,
+            "completed_evidence": [],
+            "live_handles": [],
+            "failed_scope": ["draft:1"],
+            "signals": proof["signals"],
+        }
+        blocked = evaluate_root_workflow(fixture)["mutation_admission"]
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertIn("forensics_incomplete", blocked["reasons"])
+        self.assertEqual(blocked["forensics"]["cap_bytes"], 0)
 
     def test_protected_domains_require_exact_current_authorization(self):
         categories = [

@@ -7,6 +7,9 @@ _TOPOLOGIES = {"L0", "L1", "L2", "L3", "L4"}
 _TRIGGER_STATES = {"fired", "not_fired", "not_evaluated", "not_applicable"}
 _PROCESS_FACTS = {"process_exit", "generated_output", "attempt_pass"}
 
+# Maximum self-reported forensics cap in bytes; must match the JS harness constant.
+_FORENSIC_RESULT_CAP = 2000
+
 _CLASSIFICATION_RESULTS = {"protected", "unprotected", "uncertain"}
 _PROTECTED_CATEGORIES = {
     "security_account_control",
@@ -49,7 +52,7 @@ def _blocked_admission(
         isinstance(supplied, dict)
         and isinstance(supplied.get("cap_bytes"), int)
         and not isinstance(supplied["cap_bytes"], bool)
-        and supplied["cap_bytes"] >= 0
+        and 0 <= supplied["cap_bytes"] <= _FORENSIC_RESULT_CAP
         and isinstance(supplied.get("last_raw"), str)
         and len(supplied["last_raw"].encode()) <= supplied["cap_bytes"]
         and _string_list(supplied.get("completed_evidence"))
