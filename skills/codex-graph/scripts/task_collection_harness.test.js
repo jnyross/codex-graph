@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
@@ -285,6 +286,30 @@ test("unwraps resolveTool envelopes from wait and read", async () => {
   assert.equal(result.terminal.node_id, "W1");
 });
 
+
+test("root admission orchestration: protected mutation needs a parent receipt", () => {
+  const python = process.platform === "win32" ? "python" : "python3";
+  const scenario = [
+    "import sys",
+    'sys.path.insert(0, "skills/codex-graph/scripts")',
+    "from root_workflow import evaluate_root_workflow",
+    "from test_root_workflow import metadata, parent_authorization",
+    "blocked = metadata()",
+    'item = blocked["mutation_admission"]["security_gate"]["item_classifications"][0]',
+    'item.update({"result": "protected", "categories": ["security_account_control"], "deterministic_markers": ["marker:account"]})',
+    'assert evaluate_root_workflow(blocked)["mutation_admission"]["status"] == "blocked"',
+    "allowed = metadata()",
+    'item = allowed["mutation_admission"]["security_gate"]["item_classifications"][0]',
+    'item.update({"result": "protected", "categories": ["security_account_control"], "deterministic_markers": ["marker:account"]})',
+    'allowed["mutation_admission"]["security_gate"]["authorization"] = parent_authorization("decision:orchestration")',
+    'assert evaluate_root_workflow(allowed)["mutation_admission"]["status"] == "allow"',
+  ].join("\n");
+  const result = spawnSync(python, ["-c", scenario], {
+    cwd: path.resolve(__dirname, "../../.."),
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
 
 // ── Dynamic-workflow pattern fixtures ───────────────────────────────────────
 // Shapes derived from the same orchestration patterns as testcases/.
