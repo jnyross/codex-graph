@@ -511,9 +511,9 @@ def _security_gate_allows(
         and bool(security["classification_reasons"])
         and security.get("uncertainty") is False
         and isinstance(expiry, dict)
-        and isinstance(expiry.get("expired"), bool)
+        and expiry.get("expired") is False
         and expiry.get("classification_preserved") is True
-        and isinstance(expiry.get("material_usable"), bool)
+        and expiry.get("material_usable") is True
         and security.get("authorization_current") is True
         and security.get("authorization_ref") == decision_ref
         and security.get("authorization_scope_id") == scope_id

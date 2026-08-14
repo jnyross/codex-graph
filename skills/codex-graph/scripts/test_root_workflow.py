@@ -1216,7 +1216,7 @@ class RootWorkflowTests(unittest.TestCase):
             "repeated repair request": "failed",
             "malformed alias collection": "failed",
             "unknown security category": "failed",
-            "expired security gate": "accepted",
+            "expired security gate": "failed",
             "stale gate authorization": "failed",
             "missing security locator": "failed",
             "partial mutation with blocked target": "failed",
