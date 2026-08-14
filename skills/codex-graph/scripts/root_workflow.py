@@ -1100,7 +1100,17 @@ def _present_field(record: object, field: str) -> bool:
     if not isinstance(record, dict) or field not in record:
         return False
     value = record[field]
-    return value is not None and (not isinstance(value, str) or bool(value))
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value is True
+    if isinstance(value, (str, list, dict, tuple, set)):
+        if field == "ranges":
+            return True
+        return bool(value)
+    if field == "length":
+        return True
+    return bool(value)
 
 
 def _valid_string_set(value: object) -> bool:
@@ -3282,6 +3292,12 @@ def evaluate_root_workflow(
         manifest, terminal = _evaluate_acceptance_manifest(
             metadata["acceptance_manifest"], revision
         )
+        if terminal == "accepted" and not root_may_execute:
+            terminal = "blocked"
+            manifest["terminal"] = {
+                "status": terminal,
+                "reason_code": "pre_action_evidence_gap",
+            }
         result["acceptance_manifest"] = manifest
         result["workflow_state"] = {"state": terminal, "final": True}
         result["execution_permission"] = {

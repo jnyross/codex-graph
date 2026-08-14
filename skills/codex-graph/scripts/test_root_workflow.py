@@ -3304,5 +3304,34 @@ class RootWorkflowTests(unittest.TestCase):
         self.assertTrue(result["workflow_state"]["final"])
 
 
+    def test_blocked_mutation_admission_prevents_accepted_manifest(self):
+        """A blocked mutation admission must not be overridden by an acceptance manifest verdict."""
+        md = metadata()
+        md["acceptance_manifest"] = acceptance_manifest()
+        md["mutation_admission"]["transport_proof"]["returned_scope"] = []
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+        self.assertNotEqual(
+            result["workflow_state"]["state"], "accepted"
+        )
+
+    def test_placeholder_transport_field_rejected(self):
+        """Transport proof fields that are empty/False/0 placeholders must not count as present."""
+        manifest = acceptance_manifest()
+        pre_ref = manifest["targets"][0]["pre_ref"]
+        transport_ref = manifest["evidence_records"][pre_ref]["transport_ref"]
+        manifest["evidence_records"][transport_ref]["fixed_predicate"] = 0
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+
 if __name__ == "__main__":
     unittest.main()
