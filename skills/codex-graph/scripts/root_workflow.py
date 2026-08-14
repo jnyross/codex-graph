@@ -809,7 +809,7 @@ def _evaluate_target(
     )
     if (
         isinstance(pre_transport, dict)
-        and isinstance(pre_transport.get("required_fields"), list)
+        and _string_list(pre_transport.get("required_fields"))
         and not {"canonical_target_id", *row["pre"]}.issubset(
             pre_transport["required_fields"]
         )
@@ -900,7 +900,7 @@ def _evaluate_target(
     )
     if (
         isinstance(post_transport, dict)
-        and isinstance(post_transport.get("required_fields"), list)
+        and _string_list(post_transport.get("required_fields"))
         and not {"canonical_target_id", *row["post"]}.issubset(
             post_transport["required_fields"]
         )
@@ -1418,7 +1418,11 @@ def _evaluate_acceptance_manifest(
         target_id = target.get("canonical_target_id")
         aliases = target.get("aliases")
         for alias in aliases if isinstance(aliases, list) else []:
-            if isinstance(alias, dict) and isinstance(alias.get("alias"), str):
+            if (
+                isinstance(target_id, str)
+                and isinstance(alias, dict)
+                and isinstance(alias.get("alias"), str)
+            ):
                 alias_targets.setdefault(alias["alias"], set()).add(target_id)
     if any(len(canonical_ids) != 1 for canonical_ids in alias_targets.values()):
         shape_reasons.append("ambiguous_alias_mapping")
@@ -1469,8 +1473,10 @@ def _evaluate_acceptance_manifest(
         if not isinstance(candidate, dict):
             continue
         if candidate_family == "create_append":
-            pre = records.get(candidate.get("pre_ref"))
-            receipt = records.get(candidate.get("receipt_ref"))
+            pre_ref = candidate.get("pre_ref")
+            receipt_ref = candidate.get("receipt_ref")
+            pre = records.get(pre_ref) if isinstance(pre_ref, str) else None
+            receipt = records.get(receipt_ref) if isinstance(receipt_ref, str) else None
             if isinstance(pre, dict) and isinstance(
                 pre.get("client_mutation_key"), str
             ):

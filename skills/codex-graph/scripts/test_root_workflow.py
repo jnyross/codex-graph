@@ -2031,5 +2031,41 @@ class RootWorkflowTests(unittest.TestCase):
                     persisted_result["review_gate"]["reasons"],
                 )
 
+    def test_unhashable_manifest_identifiers_fail_closed(self):
+        """Malformed identifier values must not crash the acceptance evaluator."""
+        cases = [
+            ("pre_ref list", lambda m: m["targets"][0].__setitem__("pre_ref", [])),
+            (
+                "receipt_ref dict",
+                lambda m: m["targets"][0].__setitem__("receipt_ref", {}),
+            ),
+            (
+                "canonical_target_id list",
+                lambda m: m["targets"][0].__setitem__("canonical_target_id", ["bad"]),
+            ),
+            (
+                "required_fields contains dict",
+                lambda m: [
+                    m["evidence_records"][ref].__setitem__(
+                        "required_fields", ["canonical_target_id", {}]
+                    )
+                    for ref in m["evidence_records"]
+                    if m["evidence_records"][ref].get("kind") == "transport_proof"
+                ],
+            ),
+        ]
+        for label, mutate in cases:
+            with self.subTest(case=label):
+                manifest = family_manifest("create_append")
+                mutate(manifest)
+                md = metadata()
+                md["acceptance_manifest"] = manifest
+                result = evaluate_root_workflow(md)
+                self.assertNotEqual(
+                    result["workflow_state"],
+                    {"state": "accepted", "final": True},
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
