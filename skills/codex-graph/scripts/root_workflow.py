@@ -851,6 +851,8 @@ def _worker_reasons(worker: object, prefix: str = "worker") -> list[str]:
         reasons.append(f"unproved_{prefix}_confinement")
     return reasons
 
+_MAX_TARGET_NESTING_DEPTH = 100
+
 _RECONCILIATION_SETS = (
     "authorized",
     "inspected",
@@ -1203,12 +1205,15 @@ def _transport_complete(
     witness = record.get("witness")
     capability = record.get("capability")
     if capability == "bounded_list":
+        unique_count = witness.get("unique_count")
         return (
             isinstance(witness, dict)
             and isinstance(witness.get("authoritative_total"), int)
             and not isinstance(witness["authoritative_total"], bool)
             and witness["authoritative_total"] == len(record["target_ids"])
-            and witness.get("unique_count") == len(record["target_ids"])
+            and isinstance(unique_count, int)
+            and not isinstance(unique_count, bool)
+            and unique_count == len(record["target_ids"])
         )
     if capability == "cursor_page":
         return isinstance(witness, dict) and _present_field(
@@ -1530,7 +1535,10 @@ def _evaluate_target(
     records: dict,
     sets: dict[str, list[str]],
     authorized_mutation_id: object = None,
+    depth: int = 0,
 ) -> tuple[str, bool, bool, bool, list[str], list[str]]:
+    if depth > _MAX_TARGET_NESTING_DEPTH:
+        return "failed", False, False, False, ["excessive_target_nesting"], []
     if (
         not isinstance(target, dict)
         or not isinstance(family, str)
@@ -1888,6 +1896,7 @@ def _evaluate_target(
                 records,
                 leaf_sets,
                 authorized_mutation_id=expected_mutation,
+                depth=depth + 1,
             )
             if leaf_result[0] == "failed":
                 failures.extend(leaf_result[4] or ["failed_leaf_entry"])
@@ -2012,7 +2021,9 @@ def _zero_mutation_proved(
     return True
 
 
-def _sanitize_target(target: object) -> dict:
+def _sanitize_target(target: object, depth: int = 0) -> dict:
+    if depth > _MAX_TARGET_NESTING_DEPTH:
+        return {"depth_exceeded": True}
     if not isinstance(target, dict):
         return {}
     sanitized = {
@@ -2066,7 +2077,7 @@ def _sanitize_target(target: object) -> dict:
     leaf_entries = target.get("leaf_entries")
     if isinstance(leaf_entries, list):
         sanitized["leaf_entries"] = [
-            _sanitize_target(leaf) for leaf in leaf_entries
+            _sanitize_target(leaf, depth=depth + 1) for leaf in leaf_entries
         ]
     return sanitized
 

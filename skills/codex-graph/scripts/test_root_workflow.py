@@ -3236,6 +3236,47 @@ class RootWorkflowTests(unittest.TestCase):
             result["acceptance_manifest"]["reconciliation"]["skipped"],
         )
 
+    def test_bounded_list_unique_count_rejects_boolean(self):
+        """A bounded-list transport witness must reject a boolean unique_count."""
+        manifest = acceptance_manifest()
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        manifest["evidence_records"][set_ref]["witness"]["unique_count"] = True
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_deeply_nested_composite_target_fails_closed(self):
+        """A deeply nested operation_composite target must not crash with RecursionError."""
+        base = family_manifest("operation_composite")["targets"][0]
+        current = {**base, "canonical_target_id": "op:leaf", "leaf_entries": []}
+        for i in range(600):
+            current = {**base, "canonical_target_id": f"op:{i}", "leaf_entries": [current]}
+        manifest = family_manifest("operation_composite")
+        manifest["targets"][0] = current
+        target_id = current["canonical_target_id"]
+        for name in (
+            "authorized",
+            "inspected",
+            "intended",
+            "attempted",
+            "receipt_resolved",
+            "post_verified",
+            "accepted",
+        ):
+            manifest["reconciliation"][name] = [target_id]
+        manifest["authorization"]["canonical_target_ids"] = [target_id]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
 
 if __name__ == "__main__":
     unittest.main()
