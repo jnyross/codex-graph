@@ -1563,8 +1563,8 @@ def _collect_pre_action_transport_refs(
                     if isinstance(predicate, dict):
                         _add_transport_ref(predicate.get("transport_ref"))
 
-    def _walk_target(target: object) -> None:
-        if not isinstance(target, dict):
+    def _walk_target(target: object, depth: int = 0) -> None:
+        if depth > _MAX_TARGET_NESTING_DEPTH or not isinstance(target, dict):
             return
         _add_pre_state_transport(target.get("pre_ref"))
         eligibility = target.get("eligibility")
@@ -1584,7 +1584,7 @@ def _collect_pre_action_transport_refs(
         leaf_entries = target.get("leaf_entries")
         if isinstance(leaf_entries, list):
             for leaf in leaf_entries:
-                _walk_target(leaf)
+                _walk_target(leaf, depth=depth + 1)
 
     for target in targets:
         _walk_target(target)
@@ -1778,6 +1778,7 @@ def _evaluate_target(
         and post.get("owner") == "root"
         and post.get("authoritative") is True
         and post.get("target_id") == target_id
+        and isinstance(post_transport_ref, str)
         and post_transport_ref != pre_transport_ref
         and (
             not pre_action_transport_refs

@@ -3272,9 +3272,9 @@ class RootWorkflowTests(unittest.TestCase):
     def test_deeply_nested_composite_target_fails_closed(self):
         """A deeply nested operation_composite target must not crash with RecursionError."""
         base = family_manifest("operation_composite")["targets"][0]
-        current = {**base, "canonical_target_id": "op:leaf", "leaf_entries": []}
+        current = {**base, "family": "operation_composite", "canonical_target_id": "op:leaf", "leaf_entries": []}
         for i in range(600):
-            current = {**base, "canonical_target_id": f"op:{i}", "leaf_entries": [current]}
+            current = {**base, "family": "operation_composite", "canonical_target_id": f"op:{i}", "leaf_entries": [current]}
         manifest = family_manifest("operation_composite")
         manifest["targets"][0] = current
         target_id = current["canonical_target_id"]
@@ -3676,10 +3676,10 @@ class RootWorkflowTests(unittest.TestCase):
         manifest = contradict_family(acceptance_manifest())
         md = metadata()
         md["acceptance_manifest"] = manifest
-        md["runtime_events"] = [
+        events = [
             {"type": "decision_loop_discovered", "path": "repo/root"}
         ]
-        result = evaluate_root_workflow(md)
+        result = evaluate_root_workflow(md, events)
         self.assertIn("acceptance_manifest", result)
         self.assertEqual(
             result["workflow_state"],
@@ -3689,6 +3689,21 @@ class RootWorkflowTests(unittest.TestCase):
             result["acceptance_manifest"]["terminal"]["reason_code"],
             "authoritative_or_process_failure",
         )
+
+    def test_post_state_transport_ref_non_string_fail_closed(self):
+        """A post-state transport_ref that is not a string must not crash the evaluator."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        manifest["evidence_records"][target["post_ref"]]["transport_ref"] = []
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+        self.assertIn("acceptance_manifest", result)
 
 
 if __name__ == "__main__":
