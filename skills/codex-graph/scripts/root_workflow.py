@@ -1962,13 +1962,15 @@ def _zero_mutation_proved(
     expected_predicate: object,
 ) -> bool:
     proof = manifest.get("zero_mutation_proof")
+    skipped_set = set(sets["skipped"])
     if (
         not isinstance(proof, dict)
         or not _valid_string_set(proof.get("candidate_ids"))
-        or set(proof["candidate_ids"]) != set(sets["inspected"])
-        or sets["intended"]
-        or sets["attempted"]
-        or linked["actions"]
+        or set(proof["candidate_ids"]) != skipped_set
+        or not skipped_set.issubset(set(sets["inspected"]))
+        or not skipped_set.isdisjoint(
+            set(sets["intended"]) | set(sets["attempted"])
+        )
         or not _transport_complete(
             proof.get("transport_proof_ref"),
             proof["candidate_ids"],
@@ -1981,7 +1983,12 @@ def _zero_mutation_proved(
     ):
         return False
     if proof.get("kind") == "complete_empty_set":
-        return not proof["candidate_ids"] and not sets["skipped"]
+        return (
+            not proof["candidate_ids"]
+            and not sets["skipped"]
+            and not sets["attempted"]
+            and not linked["actions"]
+        )
     if proof.get("kind") != "complete_exclusions":
         return False
 
@@ -2258,6 +2265,20 @@ def _evaluate_acceptance_manifest(
         shape_reasons.append("authorized_target_uncovered")
 
     zero_proof = manifest.get("zero_mutation_proof")
+    authorized_scope = set(sets["authorized"])
+    if (
+        not sets["intended"]
+        and isinstance(zero_proof, dict)
+        and _valid_string_set(zero_proof.get("candidate_ids"))
+    ):
+        authorized_scope |= set(zero_proof["candidate_ids"])
+    if not set(sets["skipped"]).issubset(authorized_scope):
+        shape_reasons.append("unauthorized_skipped")
+    if not set(sets["skipped"]).isdisjoint(set(sets["intended"])):
+        shape_reasons.append("conflicting_intent_skipped")
+    if not set(sets["skipped"]).issubset(set(sets["inspected"])):
+        shape_reasons.append("uninspected_skipped")
+
     expected_set_scope = (
         zero_proof.get("candidate_ids")
         if not sets["intended"] and isinstance(zero_proof, dict)
@@ -2337,11 +2358,15 @@ def _evaluate_acceptance_manifest(
 
     create_keys = []
     create_results = []
+    all_target_ids: set[str] = set()
     pending_targets = [(target, family) for target in targets]
     while pending_targets:
         candidate, candidate_family = pending_targets.pop()
         if not isinstance(candidate, dict):
             continue
+        candidate_id = candidate.get("canonical_target_id")
+        if isinstance(candidate_id, str) and candidate_id:
+            all_target_ids.add(candidate_id)
         if candidate_family == "create_append":
             pre_ref = candidate.get("pre_ref")
             receipt_ref = candidate.get("receipt_ref")
@@ -2370,6 +2395,16 @@ def _evaluate_acceptance_manifest(
         shape_reasons.append("duplicate_create_mutation_key")
     if len(create_results) != len(set(create_results)):
         shape_reasons.append("duplicate_create_result_identity")
+
+    for receipt_ref in linked["actions"]:
+        receipt = records.get(receipt_ref)
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("kind") != "receipt"
+            or receipt.get("authoritative") is not True
+            or receipt.get("target_id") not in all_target_ids
+        ):
+            shape_reasons.append("out_of_scope_action_receipt")
 
     any_action = bool(replay_prohibited or linked["actions"])
     if any_action:
@@ -2454,16 +2489,9 @@ def _evaluate_acceptance_manifest(
         normalized_sets["unknown"]
         or any(status == "indeterminate" for status in statuses.values())
     )
-    terminal_ids = set()
-    for name in ("accepted", "failed", "unknown"):
-        terminal_ids.update(normalized_sets[name])
-    blocked = bool(
-        shape_reasons
-        or any(status == "blocked" for status in statuses.values())
-        or len(sets["intended"]) != len(terminal_ids)
-        or any(target_id not in terminal_ids for target_id in sets["intended"])
-    )
-    zero_mutation_proved = not sets["intended"] and _zero_mutation_proved(
+    zero_mutation_proved = (
+        not sets["intended"] or sets["skipped"]
+    ) and _zero_mutation_proved(
         manifest,
         sets,
         linked,
@@ -2473,6 +2501,16 @@ def _evaluate_acceptance_manifest(
         if isinstance(authorization, dict)
         else None,
         exact_action,
+    )
+    terminal_ids = set()
+    for name in ("accepted", "failed", "unknown"):
+        terminal_ids.update(normalized_sets[name])
+    blocked = bool(
+        shape_reasons
+        or any(status == "blocked" for status in statuses.values())
+        or len(sets["intended"]) != len(terminal_ids)
+        or any(target_id not in terminal_ids for target_id in sets["intended"])
+        or (sets["skipped"] and not zero_mutation_proved)
     )
     if failed:
         status = "failed"

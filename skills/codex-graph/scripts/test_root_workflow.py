@@ -3416,6 +3416,122 @@ class RootWorkflowTests(unittest.TestCase):
                 )
                 self.assertTrue(result["workflow_state"]["final"])
 
+    def test_unproven_skipped_targets_block_acceptance(self):
+        """A skipped authorized target with no exclusion proof must not be accepted."""
+        manifest = acceptance_manifest()
+        target_id = manifest["targets"][0]["canonical_target_id"]
+        skipped_id = "record:r_skipped"
+        manifest["authorization"]["canonical_target_ids"].append(skipped_id)
+        manifest["reconciliation"]["authorized"].append(skipped_id)
+        manifest["reconciliation"]["inspected"].append(skipped_id)
+        manifest["reconciliation"]["skipped"].append(skipped_id)
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        set_record = manifest["evidence_records"][set_ref]
+        set_record["target_ids"].append(skipped_id)
+        set_record["requested_scope"].append(skipped_id)
+        set_record["returned_scope"].append(skipped_id)
+        set_record["witness"]["authoritative_total"] = 2
+        set_record["witness"]["unique_count"] = 2
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_skipped_targets_with_exclusion_proof_accepted(self):
+        """A skipped authorized target with a complete zero-mutation exclusion proof is accepted."""
+        manifest = acceptance_manifest()
+        target_id = manifest["targets"][0]["canonical_target_id"]
+        skipped_id = "record:r_skipped"
+        manifest["authorization"]["canonical_target_ids"].append(skipped_id)
+        for name in ("authorized", "inspected"):
+            manifest["reconciliation"][name].append(skipped_id)
+        manifest["reconciliation"]["skipped"].append(skipped_id)
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        set_record = manifest["evidence_records"][set_ref]
+        set_record["target_ids"] = [target_id, skipped_id]
+        set_record["requested_scope"] = [target_id, skipped_id]
+        set_record["returned_scope"] = [target_id, skipped_id]
+        set_record["witness"]["authoritative_total"] = 2
+        set_record["witness"]["unique_count"] = 2
+        scope_id = manifest["authorization"]["scope_id"]
+        exact_action = manifest["authorization"]["exact_action"]
+        mutation = manifest["authorization"]["mutation_id"]
+        skip_tp = "tp:skip"
+        pre_ref = "pre:skip"
+        predicate_ref = "exclusion:skip"
+        manifest["evidence_records"][skip_tp] = _transport_record(
+            [skipped_id], "bounded_list", mutation
+        )
+        manifest["evidence_records"][skip_tp]["aggregate_scope"] = scope_id
+        manifest["evidence_records"][skip_tp]["fixed_predicate"] = exact_action
+        manifest["evidence_records"][pre_ref] = {
+            "kind": "pre_state",
+            "owner": "root",
+            "authoritative": True,
+            "target_id": skipped_id,
+            "transport_ref": skip_tp,
+            "version": "ver:observed",
+            "state": "candidate",
+        }
+        manifest["evidence_records"][predicate_ref] = {
+            "kind": "exclusion",
+            "owner": "root",
+            "authoritative": True,
+            "target_id": skipped_id,
+            "eligible": False,
+            "reason_code": "predicate_miss",
+            "fixed_predicate": exact_action,
+            "pre_ref": pre_ref,
+        }
+        manifest["evidence"]["transport_proofs"].append(skip_tp)
+        manifest["evidence"]["pre"].extend([pre_ref, predicate_ref])
+        manifest["zero_mutation_proof"] = {
+            "kind": "complete_exclusions",
+            "transport_proof_ref": skip_tp,
+            "candidate_ids": [skipped_id],
+            "exclusions": {
+                skipped_id: {
+                    "reason_code": "predicate_miss",
+                    "pre_ref": pre_ref,
+                    "predicate_evidence_ref": predicate_ref,
+                }
+            },
+        }
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+
+    def test_out_of_scope_action_receipt_blocks_acceptance(self):
+        """An action receipt for a target outside the manifest must prevent acceptance."""
+        manifest = acceptance_manifest()
+        receipt_ref = "receipt:outside"
+        manifest["evidence"]["actions"].append(receipt_ref)
+        manifest["evidence_records"][receipt_ref] = {
+            "kind": "receipt",
+            "authoritative": True,
+            "target_id": "record:r_outside",
+            "mutation_id": manifest["authorization"]["mutation_id"],
+            "action": manifest["authorization"]["exact_action"],
+            "resulting_version": "ver:99",
+            "status": "committed",
+        }
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
 
 if __name__ == "__main__":
     unittest.main()
