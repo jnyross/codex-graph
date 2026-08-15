@@ -909,17 +909,6 @@ _MUTATING_REPAIR = {
     "undo",
     "compensate",
 }
-_SECURITY_AXES = {"protected", "unprotected", "uncertain"}
-_PROTECTED_CATEGORIES = {
-    "security_account_control",
-    "identity_official_status",
-    "financial_assets_obligations",
-    "legal_rights_obligations",
-    "health_medical_care",
-    "physical_safety_emergency",
-    "privacy_consent_data_control",
-    "high_impact_eligibility_essential_services",
-}
 _FAMILY_MATRIX = {
     "record_state": {
         "action": "set_state",
@@ -1297,6 +1286,8 @@ def _security_gate_allows(
     expiry = security.get("expiry")
     return (
         security.get("kind") == "security_gate"
+        and security.get("owner") == "root"
+        and security.get("authoritative") is True
         and security.get("verdict") == "allow"
         and all(
             _present_field(security, field)
@@ -1307,9 +1298,9 @@ def _security_gate_allows(
         and security.get("action") == action
         and security.get("transport_proof_ref") == pre_transport_ref
         and isinstance(item_axis, str)
-        and item_axis in _SECURITY_AXES
+        and item_axis in _CLASSIFICATION_RESULTS
         and isinstance(action_axis, str)
-        and action_axis in _SECURITY_AXES
+        and action_axis in _CLASSIFICATION_RESULTS
         and item_axis != "uncertain"
         and action_axis != "uncertain"
         and _valid_string_set(categories)

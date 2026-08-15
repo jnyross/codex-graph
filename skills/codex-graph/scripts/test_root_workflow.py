@@ -515,6 +515,8 @@ def _target_fixture(family, prefix):
         },
         refs["security"]: {
             "kind": "security_gate",
+            "owner": "root",
+            "authoritative": True,
             "item_id": f"item:{prefix}",
             "batch_id": "batch:01",
             "target_id": target_id,
@@ -3393,6 +3395,26 @@ class RootWorkflowTests(unittest.TestCase):
             {"state": "accepted", "final": True},
         )
         self.assertTrue(result["workflow_state"]["final"])
+
+    def test_security_gate_must_be_root_owned_and_authoritative(self):
+        """A delegated worker must not be able to satisfy the security gate with a self-authored record."""
+        manifest = acceptance_manifest()
+        security_ref = manifest["evidence"]["security_gate"][0]
+        for mutation in (
+            {"owner": "worker"},
+            {"authoritative": False},
+        ):
+            with self.subTest(mutation=mutation):
+                m = copy.deepcopy(manifest)
+                m["evidence_records"][security_ref].update(mutation)
+                md = metadata()
+                md["acceptance_manifest"] = m
+                result = evaluate_root_workflow(md)
+                self.assertNotEqual(
+                    result["workflow_state"],
+                    {"state": "accepted", "final": True},
+                )
+                self.assertTrue(result["workflow_state"]["final"])
 
 
 if __name__ == "__main__":
