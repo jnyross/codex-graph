@@ -2198,6 +2198,11 @@ def _evaluate_acceptance_manifest(
             isinstance(authorized_mutation_id, str)
             and authorization.get("mutation_id") != authorized_mutation_id
         )
+        or (
+            isinstance(family, str)
+            and family in _FAMILY_MATRIX
+            and exact_action != _FAMILY_MATRIX[family]["action"]
+        )
     ):
         shape_reasons.append("malformed_acceptance_authorization")
     effective_mutation_id = (
@@ -2396,13 +2401,19 @@ def _evaluate_acceptance_manifest(
     if len(create_results) != len(set(create_results)):
         shape_reasons.append("duplicate_create_result_identity")
 
+    verified_target_ids = all_target_ids | set(sets["skipped"])
+
     for receipt_ref in linked["actions"]:
         receipt = records.get(receipt_ref)
+        receipt_target_id = (
+            receipt.get("target_id") if isinstance(receipt, dict) else None
+        )
         if (
             not isinstance(receipt, dict)
             or receipt.get("kind") != "receipt"
             or receipt.get("authoritative") is not True
-            or receipt.get("target_id") not in all_target_ids
+            or not isinstance(receipt_target_id, str)
+            or receipt_target_id not in all_target_ids
         ):
             shape_reasons.append("out_of_scope_action_receipt")
 
@@ -2470,6 +2481,10 @@ def _evaluate_acceptance_manifest(
                 target_id
                 for target_id, outcome in outcome_priority.items()
                 if outcome == name
+                and (
+                    name in ("unauthorized", "duplicates")
+                    or target_id in verified_target_ids
+                )
             ]
             for name in _OUTCOME_SETS
         },

@@ -3532,6 +3532,66 @@ class RootWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(result["workflow_state"]["final"])
 
+    def test_unhashable_action_receipt_target_id_blocked(self):
+        """A non-string action receipt target_id must fail closed, not crash."""
+        manifest = acceptance_manifest()
+        receipt_ref = "receipt:weird"
+        manifest["evidence"]["actions"].append(receipt_ref)
+        manifest["evidence_records"][receipt_ref] = {
+            "kind": "receipt",
+            "authoritative": True,
+            "target_id": [],
+            "mutation_id": manifest["authorization"]["mutation_id"],
+            "action": manifest["authorization"]["exact_action"],
+            "resulting_version": "ver:99",
+            "status": "committed",
+        }
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_unverified_accepted_identifier_not_emitted(self):
+        """A ghost identifier in reconciliation.accepted must not appear in the normalized accepted set or counts."""
+        manifest = acceptance_manifest()
+        manifest["reconciliation"]["accepted"].append("ghost:1")
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotIn(
+            "ghost:1",
+            result["acceptance_manifest"]["reconciliation"]["accepted"],
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["reconciliation"]["derived_counts"]["accepted"],
+            1,
+        )
+
+    def test_forged_exact_action_blocks_acceptance(self):
+        """Manifest exact_action must match the canonical action for the declared family."""
+        manifest = acceptance_manifest()
+        manifest["authorization"]["exact_action"] = "forged_action"
+        for ref in manifest["evidence"]["actions"]:
+            receipt = manifest["evidence_records"].get(ref)
+            if isinstance(receipt, dict):
+                receipt["action"] = "forged_action"
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        set_record = manifest["evidence_records"].get(set_ref)
+        if isinstance(set_record, dict):
+            set_record["fixed_predicate"] = "forged_action"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
 
 if __name__ == "__main__":
     unittest.main()
