@@ -3753,6 +3753,46 @@ class RootWorkflowTests(unittest.TestCase):
             {"state": "human_decision_required", "final": False},
         )
 
+    def test_zero_numeric_evidence_accepted(self):
+        """Numeric evidence fields whose value is zero must not be treated as absent."""
+        manifest = family_manifest("create_append")
+        target = manifest["targets"][0]
+        receipt_ref = target["receipt_ref"]
+        post_ref = target["post_ref"]
+        manifest["evidence_records"][receipt_ref]["commit_sequence"] = 0
+        manifest["evidence_records"][post_ref]["commit_sequence"] = 0
+        target["ordering_proof"]["values"] = [0, 0]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+
+    def test_runtime_replan_with_accepted_manifest_is_non_final(self):
+        """A pending runtime replan must keep the workflow non-final even with a manifest."""
+        manifest = acceptance_manifest()
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(
+            md, [{"type": "decision_loop_discovered", "path": "repo/root"}]
+        )
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["authority_preflight"]["status"],
+            "runtime_replan",
+        )
+        self.assertEqual(
+            result["authority_preflight"]["required_action"],
+            "root_l0_plan",
+        )
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "continue", "final": False},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1084,6 +1084,19 @@ for _family_row in _FAMILY_MATRIX.values():
     _EVIDENCE_FIELDS.extend(_family_row["post"])
 _EVIDENCE_FIELDS = list(dict.fromkeys(_EVIDENCE_FIELDS))
 
+_NUMERIC_EVIDENCE_FIELDS = {
+    "length",
+    "version",
+    "resulting_version",
+    "set_revision",
+    "commit_sequence",
+    "deletion_generation",
+    "generation",
+    "operation_sequence",
+    "authoritative_total",
+    "unique_count",
+}
+
 
 def _present_field(record: object, field: str) -> bool:
     if not isinstance(record, dict) or field not in record:
@@ -1091,14 +1104,20 @@ def _present_field(record: object, field: str) -> bool:
     value = record[field]
     if value is None:
         return False
+    if field in _NUMERIC_EVIDENCE_FIELDS:
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, (int, float)):
+            return True
+        if isinstance(value, (str, list, dict, tuple, set)):
+            return bool(value)
+        return bool(value)
     if isinstance(value, bool):
         return value is True
     if isinstance(value, (str, list, dict, tuple, set)):
         if field == "ranges":
             return True
         return bool(value)
-    if field == "length":
-        return True
     return bool(value)
 
 
@@ -3410,6 +3429,9 @@ def evaluate_root_workflow(
             workflow_final = True
         elif human_decision_required:
             workflow_state_str = "human_decision_required"
+            workflow_final = False
+        elif runtime_decision:
+            workflow_state_str = "continue"
             workflow_final = False
         else:
             workflow_state_str = manifest_terminal
