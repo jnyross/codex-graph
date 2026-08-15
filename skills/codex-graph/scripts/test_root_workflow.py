@@ -3705,6 +3705,37 @@ class RootWorkflowTests(unittest.TestCase):
         self.assertTrue(result["workflow_state"]["final"])
         self.assertIn("acceptance_manifest", result)
 
+    def test_failed_manifest_surfaces_despite_preflight_defect(self):
+        """A manifest that derives failed must not be discarded by an unrelated preflight defect."""
+        manifest = contradict_family(acceptance_manifest())
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        md["authority_preflight"]["evidence"] = [""]
+        result = evaluate_root_workflow(md)
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "failed", "final": True},
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["terminal"]["reason_code"],
+            "authoritative_or_process_failure",
+        )
+
+    def test_human_decision_preserved_with_accepted_manifest(self):
+        """A pending human decision remains non-final when a manifest is supplied."""
+        manifest = acceptance_manifest()
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(
+            md, [{"type": "human_decision_required", "path": "approval"}]
+        )
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "human_decision_required", "final": False},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

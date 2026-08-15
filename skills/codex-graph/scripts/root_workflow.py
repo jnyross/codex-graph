@@ -2981,6 +2981,8 @@ def _blocked_result(
     review_gate: dict | None = None,
     review_checkpoint: object = None,
     mutation_admission: dict | None = None,
+    workflow_state: dict | None = None,
+    acceptance_manifest: dict | None = None,
 ) -> dict:
     preflight = {
         "revision": revision,
@@ -2990,7 +2992,7 @@ def _blocked_result(
         "authority": {"verdict": "unknown", "evidence": []},
         "selected_topology": "L0",
     }
-    return {
+    result = {
         "authority_preflight": preflight,
         "selected_topology": "L0",
         "execution_permission": {
@@ -3002,10 +3004,13 @@ def _blocked_result(
         "retained_evidence": retained_evidence,
         "observed_effects": observed_effects,
         "mutation_admission": mutation_admission,
-        "workflow_state": {"state": "blocked", "final": True},
+        "workflow_state": workflow_state if workflow_state is not None else {"state": "blocked", "final": True},
         "review_gate": review_gate or {"status": "not_evaluated", "reasons": []},
         "review_checkpoint": review_checkpoint,
     }
+    if acceptance_manifest is not None:
+        result["acceptance_manifest"] = acceptance_manifest
+    return result
 
 
 def evaluate_root_workflow(
@@ -3361,6 +3366,62 @@ def evaluate_root_workflow(
         }
 
 
+    mutation_admission = _evaluate_mutation_admission(
+        metadata.get("mutation_admission"),
+        metadata.get("queue_revision"),
+        set(mutation_owners),
+    )
+    review_may_execute = (
+        not runtime_decision
+        and not human_decision_required
+        and review_gate["status"] in {"pass", "not_applicable"}
+    )
+    root_may_execute = (
+        review_may_execute
+        and mutation_admission is not None
+        and mutation_admission["status"] == "allow"
+    )
+    authorized_mutation_id = (
+        mutation_admission["mutation_id"]
+        if mutation_admission is not None
+        and isinstance(mutation_admission.get("mutation_id"), str)
+        else None
+    )
+
+    manifest_obj = None
+    manifest_terminal = None
+    if "acceptance_manifest" in metadata:
+        manifest_obj, manifest_terminal = _evaluate_acceptance_manifest(
+            metadata["acceptance_manifest"], revision, authorized_mutation_id
+        )
+        if manifest_terminal == "accepted" and not root_may_execute:
+            manifest_terminal = "blocked"
+            manifest_obj["terminal"] = {
+                "status": "blocked",
+                "reason_code": "pre_action_evidence_gap",
+            }
+
+    if manifest_obj is not None:
+        if manifest_terminal in ("failed", "indeterminate"):
+            workflow_state_str = manifest_terminal
+            workflow_final = True
+        elif human_decision_required:
+            workflow_state_str = "human_decision_required"
+            workflow_final = False
+        else:
+            workflow_state_str = manifest_terminal
+            workflow_final = True
+    else:
+        if human_decision_required:
+            workflow_state_str = "human_decision_required"
+            workflow_final = False
+        elif reasons:
+            workflow_state_str = "blocked"
+            workflow_final = True
+        else:
+            workflow_state_str = "continue"
+            workflow_final = False
+
     if reasons:
         return _blocked_result(
             list(dict.fromkeys(reasons)),
@@ -3370,6 +3431,9 @@ def evaluate_root_workflow(
             revision=revision,
             review_gate=review_gate,
             review_checkpoint=next_review_checkpoint,
+            mutation_admission=mutation_admission,
+            workflow_state={"state": workflow_state_str, "final": workflow_final},
+            acceptance_manifest=manifest_obj,
         )
 
     selected_topology = "L0" if decision_loops else generic_topology
@@ -3398,30 +3462,7 @@ def evaluate_root_workflow(
     if runtime_decision:
         authority_preflight["required_action"] = "root_l0_plan"
 
-    mutation_admission = _evaluate_mutation_admission(
-        metadata.get("mutation_admission"),
-        metadata.get("queue_revision"),
-        set(mutation_owners),
-    )
-
-    review_may_execute = (
-        not runtime_decision
-        and not human_decision_required
-        and review_gate["status"] in {"pass", "not_applicable"}
-    )
-    root_may_execute = (
-        review_may_execute
-        and mutation_admission is not None
-        and mutation_admission["status"] == "allow"
-    )
     delegated_work = review_may_execute and selected_topology != "L0"
-    mutation_blocked = (
-        mutation_admission is not None
-        and mutation_admission["status"] == "blocked"
-    )
-    workflow_state = (
-        "human_decision_required" if human_decision_required else "continue"
-    )
     result = {
         "authority_preflight": authority_preflight,
         "selected_topology": selected_topology,
@@ -3437,28 +3478,16 @@ def evaluate_root_workflow(
         "review_gate": review_gate,
         "review_checkpoint": next_review_checkpoint,
         "workflow_state": {
-            "state": workflow_state,
-            "final": workflow_state == "blocked",
+            "state": workflow_state_str,
+            "final": workflow_final,
         },
     }
-    authorized_mutation_id = (
-        mutation_admission["mutation_id"]
-        if mutation_admission is not None
-        and isinstance(mutation_admission.get("mutation_id"), str)
-        else None
-    )
-    if "acceptance_manifest" in metadata:
-        manifest, terminal = _evaluate_acceptance_manifest(
-            metadata["acceptance_manifest"], revision, authorized_mutation_id
-        )
-        if terminal == "accepted" and not root_may_execute:
-            terminal = "blocked"
-            manifest["terminal"] = {
-                "status": terminal,
-                "reason_code": "pre_action_evidence_gap",
-            }
-        result["acceptance_manifest"] = manifest
-        result["workflow_state"] = {"state": terminal, "final": True}
+    if manifest_obj is not None:
+        result["acceptance_manifest"] = manifest_obj
+        result["workflow_state"] = {
+            "state": workflow_state_str,
+            "final": workflow_final,
+        }
         result["execution_permission"] = {
             "root_mutation": False,
             "delegated_work": False,
