@@ -3655,6 +3655,41 @@ class RootWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(result["workflow_state"]["final"])
 
+    def test_post_state_cannot_reuse_authorization_set_proof(self):
+        """A post-state transport must not reuse the pre-action authorized-set proof."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        manifest["evidence_records"][target["post_ref"]]["transport_ref"] = set_ref
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+        self.assertIn("acceptance_manifest", result)
+
+    def test_acceptance_manifest_failure_surfaces_when_replan_pending(self):
+        """A manifest failure must be evaluated even when a runtime replan is pending."""
+        manifest = contradict_family(acceptance_manifest())
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        md["runtime_events"] = [
+            {"type": "decision_loop_discovered", "path": "repo/root"}
+        ]
+        result = evaluate_root_workflow(md)
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "failed", "final": True},
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["terminal"]["reason_code"],
+            "authoritative_or_process_failure",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

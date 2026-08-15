@@ -1526,6 +1526,72 @@ def _target_action_started(
     )
 
 
+def _collect_pre_action_transport_refs(
+    manifest: object,
+    records: dict,
+    targets: list,
+    authorization: object,
+    zero_proof: object,
+) -> set[str]:
+    refs: set[str] = set()
+
+    def _add_transport_ref(ref: object) -> None:
+        if isinstance(ref, str):
+            refs.add(ref)
+
+    def _add_pre_state_transport(pre_ref: object) -> None:
+        pre = records.get(pre_ref) if isinstance(pre_ref, str) else None
+        if isinstance(pre, dict):
+            _add_transport_ref(pre.get("transport_ref"))
+
+    if isinstance(authorization, dict):
+        _add_transport_ref(authorization.get("set_proof_ref"))
+
+    if isinstance(zero_proof, dict):
+        _add_transport_ref(zero_proof.get("transport_proof_ref"))
+        exclusions = zero_proof.get("exclusions")
+        if isinstance(exclusions, dict):
+            for exclusion in exclusions.values():
+                if isinstance(exclusion, dict):
+                    _add_pre_state_transport(exclusion.get("pre_ref"))
+                    predicate_ref = exclusion.get("predicate_evidence_ref")
+                    predicate = (
+                        records.get(predicate_ref)
+                        if isinstance(predicate_ref, str)
+                        else None
+                    )
+                    if isinstance(predicate, dict):
+                        _add_transport_ref(predicate.get("transport_ref"))
+
+    def _walk_target(target: object) -> None:
+        if not isinstance(target, dict):
+            return
+        _add_pre_state_transport(target.get("pre_ref"))
+        eligibility = target.get("eligibility")
+        evidence_refs = (
+            eligibility.get("evidence_refs")
+            if isinstance(eligibility, dict)
+            else None
+        )
+        if isinstance(evidence_refs, list):
+            for ref in evidence_refs:
+                record = records.get(ref) if isinstance(ref, str) else None
+                if (
+                    isinstance(record, dict)
+                    and record.get("kind") == "security_gate"
+                ):
+                    _add_transport_ref(record.get("transport_proof_ref"))
+        leaf_entries = target.get("leaf_entries")
+        if isinstance(leaf_entries, list):
+            for leaf in leaf_entries:
+                _walk_target(leaf)
+
+    for target in targets:
+        _walk_target(target)
+
+    return refs
+
+
 def _evaluate_target(
     target: object,
     family: object,
@@ -1537,6 +1603,7 @@ def _evaluate_target(
     records: dict,
     sets: dict[str, list[str]],
     authorized_mutation_id: object = None,
+    pre_action_transport_refs: set[str] | None = None,
     depth: int = 0,
 ) -> tuple[str, bool, bool, bool, list[str], list[str]]:
     if depth > _MAX_TARGET_NESTING_DEPTH:
@@ -1712,6 +1779,10 @@ def _evaluate_target(
         and post.get("authoritative") is True
         and post.get("target_id") == target_id
         and post_transport_ref != pre_transport_ref
+        and (
+            not pre_action_transport_refs
+            or post_transport_ref not in pre_action_transport_refs
+        )
         and _transport_complete(
             post_transport_ref,
             [target_id],
@@ -1920,6 +1991,7 @@ def _evaluate_target(
                 records,
                 leaf_sets,
                 authorized_mutation_id=expected_mutation,
+                pre_action_transport_refs=pre_action_transport_refs,
                 depth=depth + 1,
             )
             if leaf_result[0] == "failed":
@@ -2310,6 +2382,10 @@ def _evaluate_acceptance_manifest(
     ):
         shape_reasons.append("unproved_authorized_set")
 
+    pre_action_transport_refs = _collect_pre_action_transport_refs(
+        manifest, records, targets, authorization, zero_proof
+    )
+
     alias_targets: dict[str, set[str]] = {}
     for target in targets:
         if not isinstance(target, dict):
@@ -2350,6 +2426,7 @@ def _evaluate_acceptance_manifest(
             records,
             sets,
             authorized_mutation_id=effective_mutation_id,
+            pre_action_transport_refs=pre_action_transport_refs,
         )
         target_id = (
             target.get("canonical_target_id") if isinstance(target, dict) else None
@@ -3369,7 +3446,7 @@ def evaluate_root_workflow(
         and isinstance(mutation_admission.get("mutation_id"), str)
         else None
     )
-    if "acceptance_manifest" in metadata and review_may_execute:
+    if "acceptance_manifest" in metadata:
         manifest, terminal = _evaluate_acceptance_manifest(
             metadata["acceptance_manifest"], revision, authorized_mutation_id
         )
