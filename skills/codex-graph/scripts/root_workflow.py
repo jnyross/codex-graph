@@ -1718,6 +1718,7 @@ def _evaluate_target(
         and post.get("owner") == "root"
         and post.get("authoritative") is True
         and post.get("target_id") == target_id
+        and post_transport_ref != pre_transport_ref
         and _transport_complete(
             post_transport_ref,
             [target_id],
@@ -1776,11 +1777,28 @@ def _evaluate_target(
     )
     if not ordering_is_admissible:
         failures.append("inadmissible_ordering")
-    elif ordering.get("values") != expected_values:
-        if pre_valid and receipt_core and post_verified:
-            failures.append("ordering_process_violation")
-        else:
-            post_issues.append("unresolved_ordering")
+    else:
+        pre_order_values = tuple(
+            value
+            for (source, _), value in zip(order_sources, expected_values)
+            if source == "pre"
+        )
+        post_order_values = tuple(
+            value
+            for (source, _), value in zip(order_sources, expected_values)
+            if source == "post"
+        )
+        if (
+            pre_order_values
+            and post_order_values
+            and pre_order_values == post_order_values
+        ):
+            failures.append("ordering_process_no_advancement")
+        elif ordering.get("values") != expected_values:
+            if pre_valid and receipt_core and post_verified:
+                failures.append("ordering_process_violation")
+            else:
+                post_issues.append("unresolved_ordering")
 
     if family == "create_append":
         key_state = pre.get("key_state") if isinstance(pre, dict) else None
@@ -2102,7 +2120,9 @@ def _copy_fields(value: object, fields: tuple[str, ...]) -> dict:
 
 
 def _evaluate_acceptance_manifest(
-    manifest: object, revision: object
+    manifest: object,
+    revision: object,
+    authorized_mutation_id: object = None,
 ) -> tuple[dict, str]:
     sets, set_reasons = _manifest_sets(manifest)
     if not isinstance(manifest, dict):
@@ -2176,8 +2196,19 @@ def _evaluate_acceptance_manifest(
         )
         or not _valid_string_set(authorized_ids)
         or set(authorized_ids) != set(sets["authorized"])
+        or (
+            isinstance(authorized_mutation_id, str)
+            and authorization.get("mutation_id") != authorized_mutation_id
+        )
     ):
         shape_reasons.append("malformed_acceptance_authorization")
+    effective_mutation_id = (
+        authorized_mutation_id
+        if isinstance(authorized_mutation_id, str)
+        else authorization.get("mutation_id")
+        if isinstance(authorization, dict)
+        else None
+    )
 
     repair = manifest.get("repair")
     if not _repair_valid(repair, linked, records):
@@ -2248,9 +2279,7 @@ def _evaluate_acceptance_manifest(
         expected_set_scope if isinstance(expected_set_scope, list) else [],
         linked,
         records,
-        expected_mutation=authorization.get("mutation_id")
-        if isinstance(authorization, dict)
-        else None,
+        expected_mutation=effective_mutation_id,
         expected_scope=authorization.get("scope_id")
         if isinstance(authorization, dict)
         else None,
@@ -2297,9 +2326,7 @@ def _evaluate_acceptance_manifest(
             linked,
             records,
             sets,
-            authorized_mutation_id=authorization.get("mutation_id")
-            if isinstance(authorization, dict)
-            else None,
+            authorized_mutation_id=effective_mutation_id,
         )
         target_id = (
             target.get("canonical_target_id") if isinstance(target, dict) else None
@@ -2450,9 +2477,7 @@ def _evaluate_acceptance_manifest(
         sets,
         linked,
         records,
-        authorization.get("mutation_id")
-        if isinstance(authorization, dict)
-        else None,
+        effective_mutation_id,
         authorization.get("scope_id")
         if isinstance(authorization, dict)
         else None,
@@ -3288,9 +3313,15 @@ def evaluate_root_workflow(
             "final": workflow_state == "blocked",
         },
     }
+    authorized_mutation_id = (
+        mutation_admission["mutation_id"]
+        if mutation_admission is not None
+        and isinstance(mutation_admission.get("mutation_id"), str)
+        else None
+    )
     if "acceptance_manifest" in metadata and review_may_execute:
         manifest, terminal = _evaluate_acceptance_manifest(
-            metadata["acceptance_manifest"], revision
+            metadata["acceptance_manifest"], revision, authorized_mutation_id
         )
         if terminal == "accepted" and not root_may_execute:
             terminal = "blocked"

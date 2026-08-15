@@ -601,6 +601,12 @@ def _target_fixture(family, prefix):
 
 def family_manifest(family="record_state"):
     target, records, evidence, refs = _target_fixture(family, "01")
+    manifest_mutation = "integrate-draft"
+    old_mutation = target["intent"]["mutation_id"]
+    target["intent"]["mutation_id"] = manifest_mutation
+    for record in records.values():
+        if isinstance(record, dict) and record.get("mutation_id") == old_mutation:
+            record["mutation_id"] = manifest_mutation
     if family == "operation_composite":
         leaf, leaf_records, leaf_evidence, _ = _target_fixture(
             "record_state", "leaf"
@@ -2499,7 +2505,7 @@ class RootWorkflowTests(unittest.TestCase):
         empty = acceptance_manifest()
         set_ref = empty["authorization"]["set_proof_ref"]
         empty["targets"] = []
-        empty["authorization"]["mutation_id"] = "mutation:zero"
+        empty["authorization"]["mutation_id"] = "integrate-draft"
         empty["authorization"]["canonical_target_ids"] = []
         empty["evidence"] = {
             "identity_proofs": [],
@@ -2551,7 +2557,7 @@ class RootWorkflowTests(unittest.TestCase):
         excluded["reconciliation"]["inspected"] = list(reversed(candidates))
         excluded["reconciliation"]["skipped"] = candidates
         excluded["evidence_records"][set_ref] = _transport_record(
-            list(reversed(candidates)), "bounded_list", "mutation:zero"
+            list(reversed(candidates)), "bounded_list", "integrate-draft"
         )
         excluded["evidence_records"][set_ref]["aggregate_scope"] = excluded[
             "authorization"
@@ -2565,7 +2571,7 @@ class RootWorkflowTests(unittest.TestCase):
             pre_ref = f"pre:exclude:{suffix}"
             predicate_ref = f"exclusion:{suffix}"
             excluded["evidence_records"][transport_ref] = _transport_record(
-                [candidate_id], mutation_id="mutation:zero"
+                [candidate_id], mutation_id="integrate-draft"
             )
             excluded["evidence_records"][pre_ref] = {
                 "kind": "pre_state",
@@ -3329,6 +3335,62 @@ class RootWorkflowTests(unittest.TestCase):
         result = evaluate_root_workflow(md)
         self.assertIn(
             result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_post_state_transport_cannot_reuse_pre_state_read(self):
+        """A post-state observation must cite a different transport proof than the pre-state read."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        pre = evidence_record(manifest, target, "pre")
+        post = evidence_record(manifest, target, "post")
+        original_post_transport_ref = post["transport_ref"]
+        post["transport_ref"] = pre["transport_ref"]
+        manifest["evidence"]["transport_proofs"] = [
+            ref
+            for ref in manifest["evidence"]["transport_proofs"]
+            if ref != original_post_transport_ref
+        ]
+        manifest["evidence_records"].pop(original_post_transport_ref, None)
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_ordering_proof_requires_advancement_between_pre_and_post(self):
+        """An ordering proof must show the state move between pre and post observations."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        pre = evidence_record(manifest, target, "pre")
+        post = evidence_record(manifest, target, "post")
+        receipt = evidence_record(manifest, target, "receipt")
+        pre_value = pre["version"]
+        post["version"] = pre_value
+        receipt["resulting_version"] = pre_value
+        target["ordering_proof"]["values"] = [pre_value, pre_value, pre_value]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_acceptance_manifest_mutation_id_must_match_admitted_mutation(self):
+        """The manifest's authorized mutation identity must match the admitted mutation identity."""
+        manifest = acceptance_manifest()
+        manifest["authorization"]["mutation_id"] = "mutation:forged"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
         )
         self.assertTrue(result["workflow_state"]["final"])
 
