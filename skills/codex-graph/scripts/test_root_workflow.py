@@ -432,13 +432,15 @@ def _transport_record(
     capability="single_object_blob",
     mutation_id="mutation:proof",
     required_fields=("canonical_target_id",),
+    aggregate_scope="scope:s_01",
+    fixed_predicate="fixture_predicate",
 ):
     record = {
         "kind": "transport_proof",
         "mutation_id": mutation_id,
         "target_ids": list(target_ids),
-        "aggregate_scope": "declared_targets",
-        "fixed_predicate": "fixture_predicate",
+        "aggregate_scope": aggregate_scope,
+        "fixed_predicate": fixed_predicate,
         "required_fields": list(required_fields),
         "capability": capability,
         "read_locator": f"read:{mutation_id}",
@@ -487,8 +489,12 @@ def _target_fixture(family, prefix):
         refs["set"]: _transport_record(
             [target_id], "bounded_list", mutation_id
         ),
-        refs["pre_transport"]: _transport_record([target_id], mutation_id=mutation_id),
-        refs["post_transport"]: _transport_record([target_id], mutation_id=mutation_id),
+        refs["pre_transport"]: _transport_record(
+            [target_id], mutation_id=mutation_id, fixed_predicate=case["action"]
+        ),
+        refs["post_transport"]: _transport_record(
+            [target_id], mutation_id=mutation_id, fixed_predicate=case["action"]
+        ),
         refs["pre"]: {
             "kind": "pre_state",
             "owner": "root",
@@ -545,6 +551,10 @@ def _target_fixture(family, prefix):
     }
     records[refs["set"]]["aggregate_scope"] = "scope:s_01"
     records[refs["set"]]["fixed_predicate"] = case["action"]
+    records[refs["pre_transport"]]["aggregate_scope"] = "scope:s_01"
+    records[refs["pre_transport"]]["fixed_predicate"] = case["action"]
+    records[refs["post_transport"]]["aggregate_scope"] = "scope:s_01"
+    records[refs["post_transport"]]["fixed_predicate"] = case["action"]
     records[refs["pre_transport"]]["required_fields"] = [
         "canonical_target_id",
         *case["pre"],
@@ -2573,7 +2583,9 @@ class RootWorkflowTests(unittest.TestCase):
             pre_ref = f"pre:exclude:{suffix}"
             predicate_ref = f"exclusion:{suffix}"
             excluded["evidence_records"][transport_ref] = _transport_record(
-                [candidate_id], mutation_id="integrate-draft"
+                [candidate_id],
+                mutation_id="integrate-draft",
+                fixed_predicate=excluded["authorization"]["exact_action"],
             )
             excluded["evidence_records"][pre_ref] = {
                 "kind": "pre_state",
@@ -2591,7 +2603,7 @@ class RootWorkflowTests(unittest.TestCase):
                 "target_id": candidate_id,
                 "eligible": False,
                 "reason_code": "predicate_miss",
-                "fixed_predicate": "fixture_predicate",
+                "fixed_predicate": excluded["authorization"]["exact_action"],
                 "pre_ref": pre_ref,
             }
             excluded["evidence"]["transport_proofs"].append(transport_ref)
@@ -3508,6 +3520,10 @@ class RootWorkflowTests(unittest.TestCase):
             result["workflow_state"],
             {"state": "accepted", "final": True},
         )
+        self.assertEqual(
+            result["acceptance_manifest"]["terminal"]["reason_code"],
+            "all_targets_verified",
+        )
 
     def test_out_of_scope_action_receipt_blocks_acceptance(self):
         """An action receipt for a target outside the manifest must prevent acceptance."""
@@ -3583,6 +3599,53 @@ class RootWorkflowTests(unittest.TestCase):
         set_record = manifest["evidence_records"].get(set_ref)
         if isinstance(set_record, dict):
             set_record["fixed_predicate"] = "forged_action"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_reported_failure_for_unlisted_identifier_not_erased(self):
+        """A self-reported failure for an identifier outside the target list must fail the run."""
+        manifest = acceptance_manifest()
+        manifest["reconciliation"]["failed"] = ["ghost:failed"]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "failed", "final": True},
+        )
+        self.assertIn(
+            "ghost:failed",
+            result["acceptance_manifest"]["reconciliation"]["failed"],
+        )
+
+    def test_reported_unknown_for_unlisted_identifier_not_erased(self):
+        """A self-reported unresolved outcome for an unlisted identifier must stay indeterminate."""
+        manifest = acceptance_manifest()
+        manifest["reconciliation"]["unknown"] = ["ghost:unknown"]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "indeterminate", "final": True},
+        )
+        self.assertIn(
+            "ghost:unknown",
+            result["acceptance_manifest"]["reconciliation"]["unknown"],
+        )
+
+    def test_per_target_transport_scope_and_predicate_bound(self):
+        """A per-target pre-state transport must match the authorized scope and predicate."""
+        manifest = acceptance_manifest()
+        pre_ref = manifest["targets"][0]["pre_ref"]
+        transport_ref = manifest["evidence_records"][pre_ref]["transport_ref"]
+        manifest["evidence_records"][transport_ref]["aggregate_scope"] = "scope:forged"
         md = metadata()
         md["acceptance_manifest"] = manifest
         result = evaluate_root_workflow(md)

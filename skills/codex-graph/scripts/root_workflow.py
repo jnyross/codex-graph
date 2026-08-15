@@ -1624,6 +1624,8 @@ def _evaluate_target(
             linked,
             records,
             expected_mutation=expected_mutation,
+            expected_scope=scope_id,
+            expected_predicate=expected_action,
         )
     )
     pre_transport = (
@@ -1716,6 +1718,8 @@ def _evaluate_target(
             linked,
             records,
             expected_mutation=expected_mutation,
+            expected_scope=scope_id,
+            expected_predicate=expected_action,
         )
     )
     post_transport = (
@@ -2028,6 +2032,8 @@ def _zero_mutation_proved(
                 linked,
                 records,
                 expected_mutation=expected_mutation,
+                expected_scope=expected_scope,
+                expected_predicate=expected_predicate,
             )
             or not isinstance(predicate, dict)
             or predicate.get("kind") != "exclusion"
@@ -2482,7 +2488,7 @@ def _evaluate_acceptance_manifest(
                 for target_id, outcome in outcome_priority.items()
                 if outcome == name
                 and (
-                    name in ("unauthorized", "duplicates")
+                    name in ("unauthorized", "duplicates", "failed", "unknown")
                     or target_id in verified_target_ids
                 )
             ]
@@ -2540,7 +2546,7 @@ def _evaluate_acceptance_manifest(
     elif blocked:
         status = "blocked"
         reason_code = "pre_action_evidence_gap"
-    elif zero_mutation_proved:
+    elif not sets["intended"] and zero_mutation_proved:
         status = "accepted"
         reason_code = "zero_mutation_proved"
     elif not sets["intended"]:
