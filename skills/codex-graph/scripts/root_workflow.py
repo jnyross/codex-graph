@@ -3394,7 +3394,7 @@ def evaluate_root_workflow(
         manifest_obj, manifest_terminal = _evaluate_acceptance_manifest(
             metadata["acceptance_manifest"], revision, authorized_mutation_id
         )
-        if manifest_terminal == "accepted" and not root_may_execute:
+        if manifest_terminal == "accepted" and (not root_may_execute or reasons):
             manifest_terminal = "blocked"
             manifest_obj["terminal"] = {
                 "status": "blocked",
@@ -3405,6 +3405,9 @@ def evaluate_root_workflow(
         if manifest_terminal in ("failed", "indeterminate"):
             workflow_state_str = manifest_terminal
             workflow_final = True
+        elif reasons:
+            workflow_state_str = "blocked"
+            workflow_final = True
         elif human_decision_required:
             workflow_state_str = "human_decision_required"
             workflow_final = False
@@ -3412,12 +3415,12 @@ def evaluate_root_workflow(
             workflow_state_str = manifest_terminal
             workflow_final = True
     else:
-        if human_decision_required:
-            workflow_state_str = "human_decision_required"
-            workflow_final = False
-        elif reasons:
+        if reasons:
             workflow_state_str = "blocked"
             workflow_final = True
+        elif human_decision_required:
+            workflow_state_str = "human_decision_required"
+            workflow_final = False
         else:
             workflow_state_str = "continue"
             workflow_final = False

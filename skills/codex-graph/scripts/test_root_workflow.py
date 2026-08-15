@@ -3722,6 +3722,23 @@ class RootWorkflowTests(unittest.TestCase):
             "authoritative_or_process_failure",
         )
 
+    def test_accepted_manifest_downgraded_with_preflight_defect(self):
+        """A valid accepted manifest must be blocked when an authority preflight defect exists."""
+        manifest = acceptance_manifest()
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        md["authority_preflight"]["evidence"] = [""]
+        result = evaluate_root_workflow(md)
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "blocked", "final": True},
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["terminal"]["reason_code"],
+            "pre_action_evidence_gap",
+        )
+
     def test_human_decision_preserved_with_accepted_manifest(self):
         """A pending human decision remains non-final when a manifest is supplied."""
         manifest = acceptance_manifest()
