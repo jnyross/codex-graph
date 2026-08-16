@@ -299,8 +299,478 @@ def metadata():
         "design_review": review(),
     }
 
+_FAMILY_CASES = {
+    "record_state": {
+        "target_id": "record:r_01",
+        "action": "set_state",
+        "intent": {"expected_state": "state_expected"},
+        "pre": {"resource_id": "record:r_01", "version": "ver:41", "state": "state_before"},
+        "receipt": {"resulting_version": "ver:42", "status": "committed"},
+        "post": {"resource_id": "record:r_01", "version": "ver:42", "state": "state_expected"},
+        "order": ("monotonic_version", ["ver:41", "ver:42", "ver:42"]),
+        "contradiction": ("state", "state_contradicted"),
+    },
+    "relationship_set": {
+        "target_id": "edge:ed_09",
+        "action": "add_edge",
+        "intent": {"expected_state": "edge_present"},
+        "pre": {
+            "subject_id": "principal:p_17",
+            "relation": "member",
+            "object_id": "group:g_04",
+            "state": "edge_absent",
+            "set_revision": "setrev:08",
+        },
+        "receipt": {"set_revision": "setrev:09", "status": "committed"},
+        "post": {
+            "subject_id": "principal:p_17",
+            "relation": "member",
+            "object_id": "group:g_04",
+            "state": "edge_present",
+            "set_revision": "setrev:09",
+        },
+        "order": ("revision", ["setrev:08", "setrev:09", "setrev:09"]),
+        "contradiction": ("state", "state_contradicted"),
+    },
+    "create_append": {
+        "target_id": "create-intent:ci_21",
+        "action": "append",
+        "intent": {"expected_state": "committed"},
+        "pre": {
+            "parent_id": "container:c_04",
+            "client_mutation_key": "key:k_21",
+            "key_state": "unused",
+            "payload_digest": "sha256:payload",
+        },
+        "receipt": {
+            "client_mutation_key": "key:k_21",
+            "result_resource_id": "entry:e_88",
+            "commit_sequence": "seq:19",
+            "status": "committed",
+        },
+        "post": {
+            "resource_id": "entry:e_88",
+            "state": "committed",
+            "commit_sequence": "seq:19",
+        },
+        "order": ("service_sequence", ["seq:19", "seq:19"]),
+        "contradiction": ("state", "state_contradicted"),
+    },
+    "delete_erase": {
+        "target_id": "record:r_31",
+        "action": "soft_delete",
+        "intent": {"expected_state": "deleted"},
+        "pre": {"resource_id": "record:r_31", "version": "ver:12", "state": "present"},
+        "receipt": {
+            "tombstone_id": "tomb:t_31",
+            "deletion_generation": "delgen:13",
+            "status": "committed",
+        },
+        "post": {
+            "witness": "authoritative_tombstone",
+            "deletion_generation": "delgen:13",
+        },
+        "order": ("generation", ["ver:12", "delgen:13", "delgen:13"]),
+        "contradiction": ("witness", "target_present"),
+    },
+    "blob_content": {
+        "target_id": "blob:b_52",
+        "action": "replace_content",
+        "intent": {"expected_digest": "sha256:post"},
+        "pre": {
+            "object_id": "blob:b_52",
+            "generation": "gen:02",
+            "length": 4,
+            "digest": "sha256:pre",
+            "ranges": [[0, 4]],
+        },
+        "receipt": {
+            "generation": "gen:03",
+            "length": 4,
+            "digest": "sha256:post",
+            "status": "committed",
+        },
+        "post": {
+            "object_id": "blob:b_52",
+            "generation": "gen:03",
+            "length": 4,
+            "digest": "sha256:post",
+            "ranges": [[0, 4]],
+        },
+        "order": ("generation", ["gen:02", "gen:03", "gen:03"]),
+        "contradiction": ("digest", "sha256:contradicted"),
+    },
+    "operation_composite": {
+        "target_id": "operation:o_73",
+        "action": "run_operation",
+        "intent": {"expected_effect_ids": ["record:r_01"]},
+        "pre": {
+            "operation_id": "operation:o_73",
+            "authorized_effect_ids": ["record:r_01"],
+            "effect_manifest_capability": True,
+        },
+        "receipt": {
+            "operation_id": "operation:o_73",
+            "operation_sequence": "opseq:01",
+            "status": "accepted",
+        },
+        "post": {
+            "operation_id": "operation:o_73",
+            "terminal": True,
+            "operation_sequence": "opseq:06",
+            "effect_ids": ["record:r_01"],
+            "effect_manifest_ref": "effectmanifest:01",
+        },
+        "order": ("service_sequence", ["opseq:01", "opseq:06"]),
+        "contradiction": ("effect_ids", ["record:r_99"]),
+    },
+}
 
-def add_target(fixture, identity="draft:2", version="v4", state="ready"):
+
+def _transport_record(
+    target_ids,
+    capability="single_object_blob",
+    mutation_id="mutation:proof",
+    required_fields=("canonical_target_id",),
+    aggregate_scope="scope:s_01",
+    fixed_predicate="fixture_predicate",
+):
+    record = {
+        "kind": "transport_proof",
+        "mutation_id": mutation_id,
+        "target_ids": list(target_ids),
+        "aggregate_scope": aggregate_scope,
+        "fixed_predicate": fixed_predicate,
+        "required_fields": list(required_fields),
+        "capability": capability,
+        "read_locator": f"read:{mutation_id}",
+        "requested_scope": list(target_ids),
+        "returned_scope": list(target_ids),
+        "relevant_versions": {},
+        "signals": [],
+        "recovery_attempts": [],
+        "no_progress_stop": "not_applicable",
+        "outcome": "complete",
+    }
+    if capability == "bounded_list":
+        record["witness"] = {
+            "authoritative_total": len(target_ids),
+            "unique_count": len(target_ids),
+        }
+    else:
+        record["witness"] = {
+            "kind": "authoritative_object",
+            "value": "version:observed",
+        }
+    return record
+
+
+def _target_fixture(family, prefix):
+    case = _FAMILY_CASES[family]
+    target_id = case["target_id"]
+    mutation_id = f"mutation:{prefix}"
+    refs = {
+        "alias": f"idp:{prefix}",
+        "set": f"tp:set:{prefix}",
+        "pre_transport": f"tp:pre:{prefix}",
+        "post_transport": f"tp:post:{prefix}",
+        "pre": f"pre:{prefix}",
+        "receipt": f"receipt:{prefix}",
+        "post": f"post:{prefix}",
+        "security": f"sg:{prefix}",
+    }
+    records = {
+        refs["alias"]: {
+            "kind": "identity_mapping",
+            "authoritative": True,
+            "alias": f"alias:{prefix}",
+            "canonical_target_ids": [target_id],
+        },
+        refs["set"]: _transport_record(
+            [target_id], "bounded_list", mutation_id
+        ),
+        refs["pre_transport"]: _transport_record(
+            [target_id], mutation_id=mutation_id, fixed_predicate=case["action"]
+        ),
+        refs["post_transport"]: _transport_record(
+            [target_id], mutation_id=mutation_id, fixed_predicate=case["action"]
+        ),
+        refs["pre"]: {
+            "kind": "pre_state",
+            "owner": "root",
+            "authoritative": True,
+            "target_id": target_id,
+            "transport_ref": refs["pre_transport"],
+            **copy.deepcopy(case["pre"]),
+        },
+        refs["receipt"]: {
+            "kind": "receipt",
+            "authoritative": True,
+            "target_id": target_id,
+            "mutation_id": mutation_id,
+            "action": case["action"],
+            **copy.deepcopy(case["receipt"]),
+        },
+        refs["post"]: {
+            "kind": "post_state",
+            "owner": "root",
+            "authoritative": True,
+            "target_id": target_id,
+            "transport_ref": refs["post_transport"],
+            **copy.deepcopy(case["post"]),
+        },
+        refs["security"]: {
+            "kind": "security_gate",
+            "owner": "root",
+            "authoritative": True,
+            "item_id": f"item:{prefix}",
+            "batch_id": "batch:01",
+            "target_id": target_id,
+            "mutation_id": mutation_id,
+            "action": case["action"],
+            "target_state": "intended",
+            "transport_proof_ref": refs["pre_transport"],
+            "item_axis": "unprotected",
+            "action_axis": "unprotected",
+            "categories": [],
+            "deterministic_markers": [],
+            "evidence_locators": [f"locator:sanitized:{prefix}"],
+            "classification_reasons": ["no_protected_signal"],
+            "uncertainty": False,
+            "expiry": {
+                "expired": False,
+                "classification_preserved": True,
+                "material_usable": True,
+            },
+            "authorization_current": True,
+            "authorization_ref": "decision:d_01@queue:q_01",
+            "authorization_scope_id": "scope:s_01",
+            "partition_sets": {"allowed": [target_id], "blocked": []},
+            "verdict": "allow",
+        },
+    }
+    records[refs["set"]]["aggregate_scope"] = "scope:s_01"
+    records[refs["set"]]["fixed_predicate"] = case["action"]
+    records[refs["pre_transport"]]["aggregate_scope"] = "scope:s_01"
+    records[refs["pre_transport"]]["fixed_predicate"] = case["action"]
+    records[refs["post_transport"]]["aggregate_scope"] = "scope:s_01"
+    records[refs["post_transport"]]["fixed_predicate"] = case["action"]
+    records[refs["pre_transport"]]["required_fields"] = [
+        "canonical_target_id",
+        *case["pre"],
+    ]
+    records[refs["post_transport"]]["required_fields"] = [
+        "canonical_target_id",
+        *case["post"],
+    ]
+    target = {
+        "canonical_target_id": target_id,
+        "aliases": [{"alias": f"alias:{prefix}", "proof_ref": refs["alias"]}],
+        "eligibility": {
+            "eligible": True,
+            "reason_code": "predicate_matched",
+            "evidence_refs": [refs["pre"], refs["security"]],
+        },
+        "intent": {
+            "mutation_id": mutation_id,
+            "action": case["action"],
+            **copy.deepcopy(case["intent"]),
+        },
+        "pre_ref": refs["pre"],
+        "receipt_ref": refs["receipt"],
+        "post_ref": refs["post"],
+        "ordering_proof": {
+            "kind": case["order"][0],
+            "status": "proved",
+            "values": list(case["order"][1]),
+        },
+        "outcome": "accepted",
+    }
+    if family == "create_append":
+        binding_ref = f"idp:create:{prefix}"
+        target["identity_binding_ref"] = binding_ref
+        records[binding_ref] = {
+            "kind": "create_identity_binding",
+            "authoritative": True,
+            "client_mutation_key": case["pre"]["client_mutation_key"],
+            "result_resource_id": case["receipt"]["result_resource_id"],
+        }
+    evidence = {
+        "identity_proofs": [refs["alias"]]
+        + ([target["identity_binding_ref"]] if family == "create_append" else []),
+        "transport_proofs": [
+            refs["set"],
+            refs["pre_transport"],
+            refs["post_transport"],
+        ],
+        "pre": [refs["pre"]],
+        "security_gate": [refs["security"]],
+        "actions": [refs["receipt"]],
+        "post": [refs["post"]],
+    }
+    return target, records, evidence, refs
+
+
+def family_manifest(family="record_state"):
+    target, records, evidence, refs = _target_fixture(family, "01")
+    manifest_mutation = "integrate-draft"
+    old_mutation = target["intent"]["mutation_id"]
+    target["intent"]["mutation_id"] = manifest_mutation
+    for record in records.values():
+        if isinstance(record, dict) and record.get("mutation_id") == old_mutation:
+            record["mutation_id"] = manifest_mutation
+    if family == "operation_composite":
+        leaf, leaf_records, leaf_evidence, _ = _target_fixture(
+            "record_state", "leaf"
+        )
+        leaf["family"] = "record_state"
+        parent_mutation = target["intent"]["mutation_id"]
+        old_leaf_mutation = leaf["intent"]["mutation_id"]
+        leaf["intent"]["mutation_id"] = parent_mutation
+        for record in leaf_records.values():
+            if not isinstance(record, dict):
+                continue
+            if record.get("mutation_id") == old_leaf_mutation:
+                record["mutation_id"] = parent_mutation
+        target["leaf_entries"] = [leaf]
+        records.update(leaf_records)
+        for name, values in leaf_evidence.items():
+            evidence[name].extend(values)
+
+    target_id = target["canonical_target_id"]
+    return {
+        "schema": "codexgraph.acceptance-manifest/v1",
+        "workflow": {
+            "workflow_id": "workflow:w_01",
+            "revision": 7,
+            "attempt_id": "attempt:a_01",
+            "root_actor": "root",
+        },
+        "adapter": {
+            "family": family,
+            "adapter_id": "adapter:a_01",
+            "adapter_version": "v1",
+            "tool_contract_digest": "sha256:tool",
+        },
+        "authorization": {
+            "scope_id": "scope:s_01",
+            "decision_ref": "decision:d_01@queue:q_01",
+            "mutation_id": target["intent"]["mutation_id"],
+            "exact_action": _FAMILY_CASES[family]["action"],
+            "canonical_target_ids": [target_id],
+            "set_proof_ref": refs["set"],
+        },
+        "evidence": evidence,
+        "evidence_records": records,
+        "targets": [target],
+        "reconciliation": {
+            "authorized": [target_id],
+            "inspected": [target_id],
+            "intended": [target_id],
+            "attempted": [target_id],
+            "receipt_resolved": [target_id],
+            "post_verified": [target_id],
+            "accepted": [target_id],
+            "failed": [],
+            "unknown": [],
+            "skipped": [],
+            "unauthorized": [],
+            "duplicates": [],
+            "derived_counts": {"accepted": 99},
+        },
+        "repair": {
+            "allowed": ["narrow_read", "normalize_and_reconcile"],
+            "forbidden": ["mutation_retry", "corrective_mutation"],
+            "attempts": [],
+        },
+        "retention": {
+            "policy_id": "privacy_minimized",
+            "retained": [
+                "opaque_ids",
+                "generic_state_codes",
+                "counts",
+                "versions",
+                "locators",
+                "digests",
+                "terminal_reason",
+            ],
+            "raw_payload": "not_retained",
+            "evidence_locator_expiry": "time:locator",
+            "manifest_expiry": "time:manifest",
+            "redaction_proof_ref": "redaction:01",
+        },
+        "terminal": {"status": "accepted", "reason_code": "untrusted_claim"},
+    }
+
+def add_target(manifest, family, prefix):
+    target, records, evidence, refs = _target_fixture(family, prefix)
+    old_id = target["canonical_target_id"]
+    target_id = f"{old_id}:{prefix}"
+    old_mutation = target["intent"]["mutation_id"]
+    manifest_mutation = manifest["authorization"]["mutation_id"]
+    target["intent"]["mutation_id"] = manifest_mutation
+    target["canonical_target_id"] = target_id
+    for record in records.values():
+        if not isinstance(record, dict):
+            continue
+        for field in ("target_id", "resource_id", "object_id"):
+            if record.get(field) == old_id:
+                record[field] = target_id
+        if record.get("mutation_id") == old_mutation:
+            record["mutation_id"] = manifest_mutation
+        if record.get("canonical_target_ids") == [old_id]:
+            record["canonical_target_ids"] = [target_id]
+        if record.get("target_ids") == [old_id]:
+            record["target_ids"] = [target_id]
+            record["requested_scope"] = [target_id]
+            record["returned_scope"] = [target_id]
+        partitions = record.get("partition_sets")
+        if isinstance(partitions, dict) and partitions.get("allowed") == [old_id]:
+            partitions["allowed"] = [target_id]
+
+    manifest["targets"].append(target)
+    manifest["evidence_records"].update(records)
+    for name, values in evidence.items():
+        manifest["evidence"][name].extend(values)
+    manifest["authorization"]["canonical_target_ids"].append(target_id)
+    for name in (
+        "authorized",
+        "inspected",
+        "intended",
+        "attempted",
+        "receipt_resolved",
+        "post_verified",
+        "accepted",
+    ):
+        manifest["reconciliation"][name].append(target_id)
+
+    set_ref = manifest["authorization"]["set_proof_ref"]
+    set_record = manifest["evidence_records"][set_ref]
+    all_targets = manifest["authorization"]["canonical_target_ids"]
+    set_record["target_ids"] = list(all_targets)
+    set_record["requested_scope"] = list(all_targets)
+    set_record["returned_scope"] = list(all_targets)
+    set_record["witness"]["authoritative_total"] = len(all_targets)
+    set_record["witness"]["unique_count"] = len(all_targets)
+    return target, refs
+
+
+def acceptance_manifest():
+    return family_manifest()
+
+
+def evidence_record(manifest, target, name):
+    return manifest["evidence_records"][target[f"{name}_ref"]]
+
+
+def contradict_family(manifest):
+    target = manifest["targets"][0]
+    field, value = _FAMILY_CASES[manifest["adapter"]["family"]]["contradiction"]
+    evidence_record(manifest, target, "post")[field] = value
+    return manifest
+
+
+def add_admission_target(fixture, identity="draft:2", version="v4", state="ready"):
     proposal = fixture["mutation_admission"]
     target = {"identity": identity, "version": version, "state": state}
     proposal["targets"].append(target)
@@ -582,7 +1052,7 @@ class RootWorkflowTests(unittest.TestCase):
                 self.assertEqual(admission["evaluated_gates"], ["transport"])
 
         localized = metadata()
-        add_target(localized)
+        add_admission_target(localized)
         proof = localized["mutation_admission"]["transport_proof"]
         proof["signals"] = [
             {"scope": "draft:1", "kind": "truncation_warning"}
@@ -920,7 +1390,7 @@ class RootWorkflowTests(unittest.TestCase):
         )
 
         fixture = metadata()
-        add_target(fixture)
+        add_admission_target(fixture)
         proposed = fixture["mutation_admission"]
         proposed["security_gate"]["item_classifications"][0].update(
             {
@@ -1485,6 +1955,715 @@ class RootWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(waiting["selected_topology"], "L0")
 
+    def test_manifest_accepts_only_resolved_root_owned_target_chains(self):
+        accepted_metadata = metadata()
+        accepted_metadata["acceptance_manifest"] = acceptance_manifest()
+        accepted = evaluate_root_workflow(accepted_metadata)
+
+        self.assertEqual(
+            accepted["workflow_state"], {"state": "accepted", "final": True}
+        )
+        self.assertEqual(
+            accepted["acceptance_manifest"]["terminal"],
+            {"status": "accepted", "reason_code": "all_targets_verified"},
+        )
+        self.assertEqual(
+            accepted["acceptance_manifest"]["reconciliation"]["derived_counts"],
+            {
+                "authorized": 1,
+                "inspected": 1,
+                "intended": 1,
+                "attempted": 1,
+                "receipt_resolved": 1,
+                "post_verified": 1,
+                "accepted": 1,
+                "failed": 0,
+                "unknown": 0,
+                "skipped": 0,
+                "unauthorized": 0,
+                "duplicates": 0,
+            },
+        )
+        self.assertEqual(
+            accepted["acceptance_manifest"]["replay_prohibited"],
+            ["record:r_01"],
+        )
+
+        private = acceptance_manifest()
+        private["raw_private_payload"] = "not durable"
+        private["targets"][0]["raw_private_payload"] = "not durable"
+        private["evidence_records"][private["targets"][0]["pre_ref"]][
+            "raw_private_payload"
+        ] = "not durable"
+        repair_ref = "repair-progress:01"
+        private["evidence_records"][repair_ref] = {
+            "kind": "repair_progress",
+            "owner": "root",
+            "authoritative": True,
+            "action": "narrow_read",
+            "scope_before": ["record:r_01", "record:r_02"],
+            "scope_after": ["record:r_01"],
+            "progress": "scope_narrowed",
+            "request_id": "request:repair:01",
+            "coverage_before": 0,
+            "coverage_after": 1,
+            "raw_private_payload": "not durable",
+        }
+        private["evidence"]["pre"].append(repair_ref)
+        private["repair"]["attempts"] = [
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01", "record:r_02"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": repair_ref,
+                "request_id": "request:repair:01",
+                "coverage_before": 0,
+                "coverage_after": 1,
+                "raw_private_payload": "not durable",
+            }
+        ]
+        private_metadata = metadata()
+        private_metadata["acceptance_manifest"] = private
+        retained = evaluate_root_workflow(private_metadata)["acceptance_manifest"]
+        self.assertNotIn("raw_private_payload", retained)
+        self.assertNotIn("evidence_records", retained)
+        self.assertNotIn("raw_private_payload", retained["targets"][0])
+        self.assertIn("evidence_summaries", retained)
+        self.assertNotIn(
+            "raw_private_payload", retained["repair"]["attempts"][0]
+        )
+
+        controls = {}
+        controls["shaped JSON"] = acceptance_manifest()
+        controls["shaped JSON"]["evidence_records"] = {}
+
+        controls["worker post-state claim"] = acceptance_manifest()
+        target = controls["worker post-state claim"]["targets"][0]
+        evidence_record(controls["worker post-state claim"], target, "post")[
+            "owner"
+        ] = "worker"
+
+        controls["receipt only"] = acceptance_manifest()
+        del controls["receipt only"]["targets"][0]["post_ref"]
+
+        controls["generic timestamp"] = acceptance_manifest()
+        controls["generic timestamp"]["targets"][0]["ordering_proof"]["kind"] = (
+            "generic_timestamp"
+        )
+
+        controls["intended target not inspected"] = acceptance_manifest()
+        controls["intended target not inspected"]["reconciliation"]["inspected"] = []
+
+        controls["mismatched receipt action"] = acceptance_manifest()
+        target = controls["mismatched receipt action"]["targets"][0]
+        evidence_record(controls["mismatched receipt action"], target, "receipt")[
+            "action"
+        ] = "different_action"
+
+        controls["failure omitted from attempted set"] = contradict_family(
+            acceptance_manifest()
+        )
+        controls["failure omitted from attempted set"]["reconciliation"][
+            "attempted"
+        ] = []
+
+        controls["transport truncation"] = acceptance_manifest()
+        target = controls["transport truncation"]["targets"][0]
+        pre = evidence_record(controls["transport truncation"], target, "pre")
+        controls["transport truncation"]["evidence_records"][
+            pre["transport_ref"]
+        ]["signals"] = ["truncated"]
+        controls["unbound set mutation"] = acceptance_manifest()
+        set_ref = controls["unbound set mutation"]["authorization"]["set_proof_ref"]
+        controls["unbound set mutation"]["evidence_records"][set_ref][
+            "mutation_id"
+        ] = "mutation:unrelated"
+
+        controls["unbound set scope"] = acceptance_manifest()
+        set_ref = controls["unbound set scope"]["authorization"]["set_proof_ref"]
+        controls["unbound set scope"]["evidence_records"][set_ref][
+            "aggregate_scope"
+        ] = "scope:unrelated"
+
+        controls["unbound set action"] = acceptance_manifest()
+        set_ref = controls["unbound set action"]["authorization"]["set_proof_ref"]
+        controls["unbound set action"]["evidence_records"][set_ref][
+            "fixed_predicate"
+        ] = "different_action"
+
+        controls["incomplete security gate"] = acceptance_manifest()
+        security_ref = controls["incomplete security gate"]["evidence"][
+            "security_gate"
+        ][0]
+        del controls["incomplete security gate"]["evidence_records"][security_ref][
+            "item_axis"
+        ]
+
+        controls["declared failed outcome"] = acceptance_manifest()
+        failed_id = controls["declared failed outcome"]["targets"][0][
+            "canonical_target_id"
+        ]
+        controls["declared failed outcome"]["reconciliation"]["accepted"] = []
+        controls["declared failed outcome"]["reconciliation"]["failed"] = [failed_id]
+
+        controls["mutating evidence repair"] = acceptance_manifest()
+        controls["mutating evidence repair"]["repair"]["allowed"].append(
+            "mutation_retry"
+        )
+
+        controls["non-progressing evidence repair"] = acceptance_manifest()
+        controls["non-progressing evidence repair"]["repair"]["attempts"] = [
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": "pre:01",
+                "request_id": "request:no-progress",
+                "coverage_before": 1,
+                "coverage_after": 1,
+            }
+        ]
+        controls["fabricated repair evidence"] = acceptance_manifest()
+        controls["fabricated repair evidence"]["repair"]["attempts"] = [
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01", "record:r_02"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": "pre:fabricated",
+                "request_id": "request:fabricated",
+                "coverage_before": 0,
+                "coverage_after": 1,
+            }
+        ]
+        controls["non-root repair evidence"] = acceptance_manifest()
+        repair_ref = "repair-progress:worker"
+        repair_progress = {
+            "kind": "repair_progress",
+            "owner": "worker",
+            "authoritative": True,
+            "action": "narrow_read",
+            "scope_before": ["record:r_01", "record:r_02"],
+            "scope_after": ["record:r_01"],
+            "progress": "scope_narrowed",
+            "request_id": "request:worker",
+            "coverage_before": 0,
+            "coverage_after": 1,
+        }
+        controls["non-root repair evidence"]["evidence_records"][
+            repair_ref
+        ] = repair_progress
+        controls["non-root repair evidence"]["evidence"]["pre"].append(repair_ref)
+        controls["non-root repair evidence"]["repair"]["attempts"] = [
+            {
+                **repair_progress,
+                "evidence_ref": repair_ref,
+            }
+        ]
+
+        controls["repeated repair request"] = acceptance_manifest()
+        controls["repeated repair request"]["repair"]["attempts"] = [
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01", "record:r_02"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": "pre:01",
+                "request_id": "request:repair:01",
+                "coverage_before": 0,
+                "coverage_after": 1,
+            },
+            {
+                "action": "narrow_read",
+                "scope_before": ["record:r_01", "record:r_03"],
+                "scope_after": ["record:r_01"],
+                "progress": "scope_narrowed",
+                "evidence_ref": "post:01",
+                "request_id": "request:repair:02",
+                "coverage_before": 1,
+                "coverage_after": 2,
+            },
+        ]
+
+        controls["malformed family"] = acceptance_manifest()
+        controls["malformed family"]["adapter"]["family"] = []
+        controls["incomplete transport predicate"] = acceptance_manifest()
+        target = controls["incomplete transport predicate"]["targets"][0]
+        pre = evidence_record(
+            controls["incomplete transport predicate"], target, "pre"
+        )
+        controls["incomplete transport predicate"]["evidence_records"][
+            pre["transport_ref"]
+        ]["required_fields"].remove("state")
+
+        controls["malformed ordering kind"] = acceptance_manifest()
+        controls["malformed ordering kind"]["targets"][0]["ordering_proof"][
+            "kind"
+        ] = []
+
+        controls["malformed alias collection"] = acceptance_manifest()
+        controls["malformed alias collection"]["targets"][0]["aliases"] = None
+
+        controls["unknown security category"] = acceptance_manifest()
+        security_ref = controls["unknown security category"]["evidence"][
+            "security_gate"
+        ][0]
+        controls["unknown security category"]["evidence_records"][security_ref][
+            "categories"
+        ] = ["unknown"]
+
+        controls["expired security gate"] = acceptance_manifest()
+        security_ref = controls["expired security gate"]["evidence"][
+            "security_gate"
+        ][0]
+        controls["expired security gate"]["evidence_records"][security_ref][
+            "expiry"
+        ]["expired"] = True
+        expired_gate = controls["expired security gate"]["evidence_records"][
+            security_ref
+        ]
+        expired_gate["expiry"]["material_usable"] = False
+        expired_gate["item_axis"] = "protected"
+        expired_gate["action_axis"] = "protected"
+        expired_gate["categories"] = ["security_account_control"]
+        expired_gate["classification_reasons"] = ["matched_security_signal"]
+
+        controls["stale gate authorization"] = acceptance_manifest()
+        security_ref = controls["stale gate authorization"]["evidence"][
+            "security_gate"
+        ][0]
+        controls["stale gate authorization"]["evidence_records"][security_ref][
+            "authorization_current"
+        ] = False
+
+        controls["missing security locator"] = acceptance_manifest()
+        security_ref = controls["missing security locator"]["evidence"][
+            "security_gate"
+        ][0]
+        controls["missing security locator"]["evidence_records"][security_ref][
+            "evidence_locators"
+        ] = []
+
+        controls["partial mutation with blocked target"] = acceptance_manifest()
+        second_target, second_refs = add_target(
+            controls["partial mutation with blocked target"], "record_state", "02"
+        )
+        del second_target["receipt_ref"]
+        del second_target["post_ref"]
+        controls["partial mutation with blocked target"]["evidence"]["actions"].remove(
+            second_refs["receipt"]
+        )
+        controls["partial mutation with blocked target"]["evidence"]["post"].remove(
+            second_refs["post"]
+        )
+        second_id = second_target["canonical_target_id"]
+        for name in ("attempted", "receipt_resolved", "post_verified", "accepted"):
+            controls["partial mutation with blocked target"]["reconciliation"][
+                name
+            ].remove(second_id)
+
+        expected = {
+            "shaped JSON": "failed",
+            "worker post-state claim": "indeterminate",
+            "receipt only": "indeterminate",
+            "generic timestamp": "failed",
+            "intended target not inspected": "failed",
+            "mismatched receipt action": "failed",
+            "failure omitted from attempted set": "failed",
+            "transport truncation": "failed",
+            "unbound set mutation": "failed",
+            "unbound set scope": "failed",
+            "unbound set action": "failed",
+            "incomplete security gate": "failed",
+            "declared failed outcome": "failed",
+            "mutating evidence repair": "failed",
+            "non-progressing evidence repair": "failed",
+            "malformed family": "failed",
+            "incomplete transport predicate": "failed",
+            "malformed ordering kind": "failed",
+            "fabricated repair evidence": "failed",
+            "non-root repair evidence": "failed",
+            "repeated repair request": "failed",
+            "malformed alias collection": "failed",
+            "unknown security category": "failed",
+            "expired security gate": "failed",
+            "stale gate authorization": "failed",
+            "missing security locator": "failed",
+            "partial mutation with blocked target": "failed",
+        }
+        for name, manifest in controls.items():
+            with self.subTest(name=name):
+                control_metadata = metadata()
+                control_metadata["acceptance_manifest"] = manifest
+                self.assertEqual(
+                    evaluate_root_workflow(control_metadata)["workflow_state"],
+                    {"state": expected[name], "final": True},
+                )
+                if name == "declared failed outcome":
+                    self.assertEqual(
+                        evaluate_root_workflow(control_metadata)[
+                            "acceptance_manifest"
+                        ]["reconciliation"]["failed"],
+                        ["record:r_01"],
+                    )
+
+    def test_manifest_uses_reproved_authority_revision(self):
+        reproved_metadata = metadata()
+        reproved_review = review(design_digest="sha256:design-8")
+        reproved_review["design_revision"] = 8
+        reproved_review["independent_review"]["identity"] = "review-8"
+        manifest = acceptance_manifest()
+        manifest["workflow"]["revision"] = 8
+        reproved_metadata["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(
+            reproved_metadata,
+            [
+                {
+                    "type": "worker_mutation_discovered",
+                    "worker_role": "writer",
+                    "mutation": {"identity": "publish-draft", "owner": "root"},
+                    "revision": 8,
+                    "worker_confinement": worker(),
+                    "design_digest": "sha256:design-8",
+                    "design_review": reproved_review,
+                }
+            ],
+        )
+        self.assertEqual(
+            result["workflow_state"], {"state": "accepted", "final": True}
+        )
+
+    def test_compact_family_matrix_and_shared_terminal_controls(self):
+        for family in _FAMILY_CASES:
+            with self.subTest(family=family, control="valid"):
+                valid_metadata = metadata()
+                valid_metadata["acceptance_manifest"] = family_manifest(family)
+                self.assertEqual(
+                    evaluate_root_workflow(valid_metadata)["workflow_state"],
+                    {"state": "accepted", "final": True},
+                )
+
+            blocked = family_manifest(family)
+            target = blocked["targets"][0]
+            alias_record = blocked["evidence_records"][
+                target["aliases"][0]["proof_ref"]
+            ]
+            alias_record["canonical_target_ids"].append("target:ambiguous")
+            del target["receipt_ref"]
+            del target["post_ref"]
+            blocked["evidence"]["actions"] = []
+            blocked["evidence"]["post"] = []
+            for name in ("attempted", "receipt_resolved", "post_verified", "accepted"):
+                blocked["reconciliation"][name] = []
+
+            indeterminate = family_manifest(family)
+            del indeterminate["targets"][0]["post_ref"]
+
+            failed = {
+                "authoritative contradiction": contradict_family(
+                    family_manifest(family)
+                ),
+                "duplicate mutation": family_manifest(family),
+                "unauthorized effect": family_manifest(family),
+                "process violation": family_manifest(family),
+            }
+            failed["duplicate mutation"]["reconciliation"]["duplicates"] = [
+                failed["duplicate mutation"]["targets"][0]["canonical_target_id"]
+            ]
+            failed["unauthorized effect"]["reconciliation"]["unauthorized"] = [
+                "effect:outside_scope"
+            ]
+            failed["process violation"]["targets"][0]["ordering_proof"]["kind"] = (
+                "generic_timestamp"
+            )
+
+            controls = {
+                "pre-action ambiguity": (blocked, "blocked"),
+                "missing post-evidence": (indeterminate, "indeterminate"),
+                **{name: (manifest, "failed") for name, manifest in failed.items()},
+            }
+            if family == "create_append":
+                unresolved_identity = family_manifest(family)
+                binding_ref = unresolved_identity["targets"][0][
+                    "identity_binding_ref"
+                ]
+                del unresolved_identity["evidence_records"][binding_ref]
+                controls["unresolved create identity"] = (
+                    unresolved_identity,
+                    "indeterminate",
+                )
+                used_key = family_manifest(family)
+                target = used_key["targets"][0]
+                evidence_record(used_key, target, "pre")["key_state"] = "used"
+                controls["used create key"] = (used_key, "failed")
+
+                duplicate_binding = family_manifest(family)
+                add_target(duplicate_binding, family, "02")
+                controls["duplicate create binding"] = (
+                    duplicate_binding,
+                    "failed",
+                )
+                non_string_binding = family_manifest(family)
+                target = non_string_binding["targets"][0]
+                binding = non_string_binding["evidence_records"][
+                    target["identity_binding_ref"]
+                ]
+                evidence_record(non_string_binding, target, "pre")[
+                    "client_mutation_key"
+                ] = ["create-intent:ci_21"]
+                evidence_record(non_string_binding, target, "receipt")[
+                    "result_resource_id"
+                ] = ["note:n_21"]
+                binding["client_mutation_key"] = ["create-intent:ci_21"]
+                binding["result_resource_id"] = ["note:n_21"]
+                controls["non-string create binding"] = (
+                    non_string_binding,
+                    "failed",
+                )
+            elif family == "delete_erase":
+                weak_negative = family_manifest(family)
+                target = weak_negative["targets"][0]
+                evidence_record(weak_negative, target, "post")[
+                    "witness"
+                ] = "naked_not_found"
+                controls["naked not-found"] = (weak_negative, "indeterminate")
+            elif family == "blob_content":
+                incomplete_ranges = family_manifest(family)
+                target = incomplete_ranges["targets"][0]
+                evidence_record(incomplete_ranges, target, "post")[
+                    "ranges"
+                ] = [[0, 1], [2, 4]]
+                controls["incomplete post-ranges"] = (
+                    incomplete_ranges,
+                    "indeterminate",
+                )
+            elif family == "operation_composite":
+                duplicate_leaf = family_manifest(family)
+                target = duplicate_leaf["targets"][0]
+                leaf_id = target["leaf_entries"][0]["canonical_target_id"]
+                target["leaf_entries"].append(copy.deepcopy(target["leaf_entries"][0]))
+                target["intent"]["expected_effect_ids"] = [leaf_id, leaf_id]
+                evidence_record(duplicate_leaf, target, "pre")[
+                    "authorized_effect_ids"
+                ] = [leaf_id, leaf_id]
+                evidence_record(duplicate_leaf, target, "post")["effect_ids"] = [
+                    leaf_id,
+                    leaf_id,
+                ]
+                controls["duplicate leaf effect"] = (duplicate_leaf, "failed")
+                malformed_leaf = family_manifest(family)
+                malformed_leaf["targets"][0]["leaf_entries"] = None
+                controls["malformed leaf collection"] = (
+                    malformed_leaf,
+                    "failed",
+                )
+
+            for name, (manifest, terminal) in controls.items():
+                with self.subTest(family=family, control=name):
+                    control_metadata = metadata()
+                    control_metadata["acceptance_manifest"] = manifest
+                    result = evaluate_root_workflow(control_metadata)
+                    self.assertEqual(
+                        result["workflow_state"],
+                        {"state": terminal, "final": True},
+                    )
+                    if name == "unresolved create identity":
+                        self.assertEqual(
+                            result["acceptance_manifest"]["replay_prohibited"],
+                            ["create-intent:ci_21"],
+                        )
+
+        zero_blob = family_manifest("blob_content")
+        target = zero_blob["targets"][0]
+        target["intent"]["expected_digest"] = "sha256:empty"
+        for name in ("pre", "post"):
+            record = evidence_record(zero_blob, target, name)
+            record["length"] = 0
+            record["digest"] = "sha256:empty"
+            record["ranges"] = []
+        receipt = evidence_record(zero_blob, target, "receipt")
+        receipt["length"] = 0
+        receipt["digest"] = "sha256:empty"
+        zero_blob_metadata = metadata()
+        zero_blob_metadata["acceptance_manifest"] = zero_blob
+        self.assertEqual(
+            evaluate_root_workflow(zero_blob_metadata)["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+
+        aggregate_only = family_manifest("operation_composite")
+        target = aggregate_only["targets"][0]
+        evidence_record(aggregate_only, target, "pre")[
+            "effect_manifest_capability"
+        ] = False
+        target["leaf_entries"] = []
+        del target["receipt_ref"]
+        del target["post_ref"]
+        aggregate_only["evidence"]["actions"] = []
+        aggregate_only["evidence"]["post"] = []
+        for name in ("attempted", "receipt_resolved", "post_verified", "accepted"):
+            aggregate_only["reconciliation"][name] = []
+        aggregate_only["receipt_total"] = 1
+        aggregate_metadata = metadata()
+        aggregate_metadata["acceptance_manifest"] = aggregate_only
+        self.assertEqual(
+            evaluate_root_workflow(aggregate_metadata)["workflow_state"],
+            {"state": "blocked", "final": True},
+        )
+
+    def test_zero_mutation_requires_complete_empty_set_or_exclusions(self):
+        empty = acceptance_manifest()
+        set_ref = empty["authorization"]["set_proof_ref"]
+        empty["targets"] = []
+        empty["authorization"]["mutation_id"] = "integrate-draft"
+        empty["authorization"]["canonical_target_ids"] = []
+        empty["evidence"] = {
+            "identity_proofs": [],
+            "transport_proofs": [set_ref],
+            "pre": [],
+            "security_gate": [],
+            "actions": [],
+            "post": [],
+        }
+        empty["evidence_records"] = {
+            set_ref: _transport_record(
+                [], "bounded_list", empty["authorization"]["mutation_id"]
+            )
+        }
+        empty["evidence_records"][set_ref]["aggregate_scope"] = empty[
+            "authorization"
+        ]["scope_id"]
+        empty["evidence_records"][set_ref]["fixed_predicate"] = empty[
+            "authorization"
+        ]["exact_action"]
+        for name in (
+            "authorized",
+            "inspected",
+            "intended",
+            "attempted",
+            "receipt_resolved",
+            "post_verified",
+            "accepted",
+        ):
+            empty["reconciliation"][name] = []
+        empty["zero_mutation_proof"] = {
+            "kind": "complete_empty_set",
+            "transport_proof_ref": set_ref,
+            "candidate_ids": [],
+        }
+        empty_metadata = metadata()
+        empty_metadata["acceptance_manifest"] = empty
+        empty_result = evaluate_root_workflow(empty_metadata)
+        self.assertEqual(
+            empty_result["workflow_state"], {"state": "accepted", "final": True}
+        )
+        self.assertEqual(
+            empty_result["acceptance_manifest"]["terminal"]["reason_code"],
+            "zero_mutation_proved",
+        )
+
+        excluded = copy.deepcopy(empty)
+        candidates = ["record:r_a", "record:r_b"]
+        excluded["reconciliation"]["inspected"] = list(reversed(candidates))
+        excluded["reconciliation"]["skipped"] = candidates
+        excluded["evidence_records"][set_ref] = _transport_record(
+            list(reversed(candidates)), "bounded_list", "integrate-draft"
+        )
+        excluded["evidence_records"][set_ref]["aggregate_scope"] = excluded[
+            "authorization"
+        ]["scope_id"]
+        excluded["evidence_records"][set_ref]["fixed_predicate"] = excluded[
+            "authorization"
+        ]["exact_action"]
+        exclusions = {}
+        for suffix, candidate_id in zip(("a", "b"), candidates):
+            transport_ref = f"tp:exclude:{suffix}"
+            pre_ref = f"pre:exclude:{suffix}"
+            predicate_ref = f"exclusion:{suffix}"
+            excluded["evidence_records"][transport_ref] = _transport_record(
+                [candidate_id],
+                mutation_id="integrate-draft",
+                fixed_predicate=excluded["authorization"]["exact_action"],
+            )
+            excluded["evidence_records"][pre_ref] = {
+                "kind": "pre_state",
+                "owner": "root",
+                "authoritative": True,
+                "target_id": candidate_id,
+                "transport_ref": transport_ref,
+                "version": "ver:observed",
+                "state": "candidate",
+            }
+            excluded["evidence_records"][predicate_ref] = {
+                "kind": "exclusion",
+                "owner": "root",
+                "authoritative": True,
+                "target_id": candidate_id,
+                "eligible": False,
+                "reason_code": "predicate_miss",
+                "fixed_predicate": excluded["authorization"]["exact_action"],
+                "pre_ref": pre_ref,
+            }
+            excluded["evidence"]["transport_proofs"].append(transport_ref)
+            excluded["evidence"]["pre"].extend([pre_ref, predicate_ref])
+            exclusions[candidate_id] = {
+                "reason_code": "predicate_miss",
+                "pre_ref": pre_ref,
+                "predicate_evidence_ref": predicate_ref,
+            }
+        excluded["zero_mutation_proof"] = {
+            "kind": "complete_exclusions",
+            "transport_proof_ref": set_ref,
+            "candidate_ids": candidates,
+            "exclusions": exclusions,
+        }
+        excluded_metadata = metadata()
+        excluded_metadata["acceptance_manifest"] = excluded
+        self.assertEqual(
+            evaluate_root_workflow(excluded_metadata)["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+
+        invalid_exclusions = copy.deepcopy(excluded)
+        invalid_exclusions["zero_mutation_proof"]["exclusions"] = {}
+        missing_exclusion_evidence = copy.deepcopy(excluded)
+        first_pre_ref = missing_exclusion_evidence["zero_mutation_proof"][
+            "exclusions"
+        ]["record:r_a"]["pre_ref"]
+        del missing_exclusion_evidence["evidence_records"][first_pre_ref]
+        missing_exclusion_reason = copy.deepcopy(excluded)
+        exclusion = missing_exclusion_reason["zero_mutation_proof"]["exclusions"][
+            "record:r_a"
+        ]
+        predicate_ref = exclusion["predicate_evidence_ref"]
+        del exclusion["reason_code"]
+        del missing_exclusion_reason["evidence_records"][predicate_ref][
+            "reason_code"
+        ]
+        unbound_zero_proof = copy.deepcopy(empty)
+        unbound_zero_proof["evidence_records"][set_ref][
+            "mutation_id"
+        ] = "mutation:unrelated"
+        for name, invalid in {
+            "missing proof": {
+                key: value
+                for key, value in empty.items()
+                if key != "zero_mutation_proof"
+            },
+            "incomplete exclusions": invalid_exclusions,
+            "missing exclusion evidence": missing_exclusion_evidence,
+            "missing exclusion reason": missing_exclusion_reason,
+            "unbound zero proof": unbound_zero_proof,
+        }.items():
+            with self.subTest(name=name):
+                invalid_metadata = metadata()
+                invalid_metadata["acceptance_manifest"] = invalid
+                self.assertEqual(
+                    evaluate_root_workflow(invalid_metadata)["workflow_state"],
+                    {"state": "blocked", "final": True},
+                )
     def test_findings_require_complete_binding_dispositions_and_clearance(self):
         advisory = metadata()
         advisory_finding = finding("advisory", disposition="advisory")
@@ -1925,6 +3104,695 @@ class RootWorkflowTests(unittest.TestCase):
                     "repair_limit_exceeded",
                     persisted_result["review_gate"]["reasons"],
                 )
+
+    def test_unhashable_manifest_identifiers_fail_closed(self):
+        """Malformed identifier values must not crash the acceptance evaluator."""
+        cases = [
+            ("pre_ref list", lambda m: m["targets"][0].__setitem__("pre_ref", [])),
+            (
+                "receipt_ref dict",
+                lambda m: m["targets"][0].__setitem__("receipt_ref", {}),
+            ),
+            (
+                "canonical_target_id list",
+                lambda m: m["targets"][0].__setitem__("canonical_target_id", ["bad"]),
+            ),
+            (
+                "required_fields contains dict",
+                lambda m: [
+                    m["evidence_records"][ref].__setitem__(
+                        "required_fields", ["canonical_target_id", {}]
+                    )
+                    for ref in m["evidence_records"]
+                    if m["evidence_records"][ref].get("kind") == "transport_proof"
+                ],
+            ),
+        ]
+        for label, mutate in cases:
+            with self.subTest(case=label):
+                manifest = family_manifest("create_append")
+                mutate(manifest)
+                md = metadata()
+                md["acceptance_manifest"] = manifest
+                result = evaluate_root_workflow(md)
+                self.assertNotEqual(
+                    result["workflow_state"],
+                    {"state": "accepted", "final": True},
+                )
+
+    def test_target_intent_must_match_authorized_mutation_id(self):
+        """A target cannot claim a mutation_id different from the authorization."""
+        manifest = family_manifest("record_state")
+        manifest["targets"][0]["intent"]["mutation_id"] = "mutation:forged"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+
+    def test_authorized_targets_must_be_covered_by_intent_or_dispositions(self):
+        """An authorized target that is not intended, skipped, unauthorized, or duplicate is blocked."""
+        manifest = acceptance_manifest()
+        target_id = manifest["targets"][0]["canonical_target_id"]
+        extra = "record:uncovered"
+        manifest["authorization"]["canonical_target_ids"].append(extra)
+        manifest["reconciliation"]["authorized"].append(extra)
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        set_record = manifest["evidence_records"][set_ref]
+        set_record["target_ids"].append(extra)
+        set_record["requested_scope"].append(extra)
+        set_record["returned_scope"].append(extra)
+        set_record["witness"]["authoritative_total"] = 2
+        set_record["witness"]["unique_count"] = 2
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+
+    def test_composite_leaf_action_and_mutation_bound(self):
+        """A composite operation's leaf entries must use the leaf family action and the parent mutation."""
+        manifest = family_manifest("operation_composite")
+        leaf = manifest["targets"][0]["leaf_entries"][0]
+
+        def result_for(mutator):
+            m = copy.deepcopy(manifest)
+            mutator(m["targets"][0]["leaf_entries"][0])
+            md = metadata()
+            md["acceptance_manifest"] = m
+            return evaluate_root_workflow(md)
+
+        def forge_action(leaf):
+            leaf["intent"]["action"] = "run_operation"
+
+        def forge_mutation(leaf):
+            leaf["intent"]["mutation_id"] = "mutation:forged"
+
+        for label, mutator in [("action", forge_action), ("mutation", forge_mutation)]:
+            with self.subTest(forgery=label):
+                result = result_for(mutator)
+                self.assertNotEqual(
+                    result["workflow_state"],
+                    {"state": "accepted", "final": True},
+                )
+
+    def test_blocked_target_is_not_recorded_as_accepted(self):
+        """A blocked target must not keep an untrusted 'accepted' label in the reconciliation."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        target_id = target["canonical_target_id"]
+        del target["receipt_ref"]
+        del target["post_ref"]
+        manifest["evidence"]["actions"] = []
+        manifest["evidence"]["post"] = []
+        for name in ("attempted", "receipt_resolved", "post_verified"):
+            manifest["reconciliation"][name] = []
+        # reconciliation["accepted"] is intentionally left populated with the untrusted claim.
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"], {"state": "blocked", "final": True}
+        )
+        self.assertNotIn(
+            target_id,
+            result["acceptance_manifest"]["reconciliation"]["accepted"],
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["reconciliation"]["derived_counts"][
+                "accepted"
+            ],
+            0,
+        )
+
+    def test_declared_failed_target_with_no_evidence_stays_failed(self):
+        """A target the manifest reports as failed must stay failed even when the evaluator has no action evidence."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        target_id = target["canonical_target_id"]
+        del target["receipt_ref"]
+        del target["post_ref"]
+        manifest["evidence"]["actions"] = []
+        manifest["evidence"]["post"] = []
+        for name in ("attempted", "receipt_resolved", "post_verified", "accepted"):
+            manifest["reconciliation"][name] = []
+        manifest["reconciliation"]["failed"] = [target_id]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"], {"state": "failed", "final": True}
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["reconciliation"]["failed"],
+            [target_id],
+        )
+        self.assertNotIn(
+            target_id,
+            result["acceptance_manifest"]["reconciliation"]["skipped"],
+        )
+
+    def test_bounded_list_unique_count_rejects_boolean(self):
+        """A bounded-list transport witness must reject a boolean unique_count."""
+        manifest = acceptance_manifest()
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        manifest["evidence_records"][set_ref]["witness"]["unique_count"] = True
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_deeply_nested_composite_target_fails_closed(self):
+        """A deeply nested operation_composite target must not crash with RecursionError."""
+        base = family_manifest("operation_composite")["targets"][0]
+        current = {**base, "family": "operation_composite", "canonical_target_id": "op:leaf", "leaf_entries": []}
+        for i in range(600):
+            current = {**base, "family": "operation_composite", "canonical_target_id": f"op:{i}", "leaf_entries": [current]}
+        manifest = family_manifest("operation_composite")
+        manifest["targets"][0] = current
+        target_id = current["canonical_target_id"]
+        for name in (
+            "authorized",
+            "inspected",
+            "intended",
+            "attempted",
+            "receipt_resolved",
+            "post_verified",
+            "accepted",
+        ):
+            manifest["reconciliation"][name] = [target_id]
+        manifest["authorization"]["canonical_target_ids"] = [target_id]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+
+    def test_bounded_list_witness_non_dict_rejects_without_crash(self):
+        """A bounded-list transport witness that is not a dict must not crash the evaluator."""
+        manifest = acceptance_manifest()
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        manifest["evidence_records"][set_ref]["witness"] = "not-a-dict"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_malformed_target_entry_blocks_acceptance(self):
+        """A target entry without a usable identifier must prevent the manifest from being accepted."""
+        manifest = acceptance_manifest()
+        manifest["targets"].append({"family": "record_state"})
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+
+    def test_blocked_mutation_admission_prevents_accepted_manifest(self):
+        """A blocked mutation admission must not be overridden by an acceptance manifest verdict."""
+        md = metadata()
+        md["acceptance_manifest"] = acceptance_manifest()
+        md["mutation_admission"]["transport_proof"]["returned_scope"] = []
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+        self.assertNotEqual(
+            result["workflow_state"]["state"], "accepted"
+        )
+
+    def test_placeholder_transport_field_rejected(self):
+        """Transport proof fields that are empty/False/0 placeholders must not count as present."""
+        manifest = acceptance_manifest()
+        pre_ref = manifest["targets"][0]["pre_ref"]
+        transport_ref = manifest["evidence_records"][pre_ref]["transport_ref"]
+        manifest["evidence_records"][transport_ref]["fixed_predicate"] = 0
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn(
+            result["workflow_state"]["state"], ("blocked", "failed")
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_post_state_transport_cannot_reuse_pre_state_read(self):
+        """A post-state observation must cite a different transport proof than the pre-state read."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        pre = evidence_record(manifest, target, "pre")
+        post = evidence_record(manifest, target, "post")
+        original_post_transport_ref = post["transport_ref"]
+        post["transport_ref"] = pre["transport_ref"]
+        manifest["evidence"]["transport_proofs"] = [
+            ref
+            for ref in manifest["evidence"]["transport_proofs"]
+            if ref != original_post_transport_ref
+        ]
+        manifest["evidence_records"].pop(original_post_transport_ref, None)
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_ordering_proof_requires_advancement_between_pre_and_post(self):
+        """An ordering proof must show the state move between pre and post observations."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        pre = evidence_record(manifest, target, "pre")
+        post = evidence_record(manifest, target, "post")
+        receipt = evidence_record(manifest, target, "receipt")
+        pre_value = pre["version"]
+        post["version"] = pre_value
+        receipt["resulting_version"] = pre_value
+        target["ordering_proof"]["values"] = [pre_value, pre_value, pre_value]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_acceptance_manifest_mutation_id_must_match_admitted_mutation(self):
+        """The manifest's authorized mutation identity must match the admitted mutation identity."""
+        manifest = acceptance_manifest()
+        manifest["authorization"]["mutation_id"] = "mutation:forged"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_security_gate_must_be_root_owned_and_authoritative(self):
+        """A delegated worker must not be able to satisfy the security gate with a self-authored record."""
+        manifest = acceptance_manifest()
+        security_ref = manifest["evidence"]["security_gate"][0]
+        for mutation in (
+            {"owner": "worker"},
+            {"authoritative": False},
+        ):
+            with self.subTest(mutation=mutation):
+                m = copy.deepcopy(manifest)
+                m["evidence_records"][security_ref].update(mutation)
+                md = metadata()
+                md["acceptance_manifest"] = m
+                result = evaluate_root_workflow(md)
+                self.assertNotEqual(
+                    result["workflow_state"],
+                    {"state": "accepted", "final": True},
+                )
+                self.assertTrue(result["workflow_state"]["final"])
+
+    def test_unproven_skipped_targets_block_acceptance(self):
+        """A skipped authorized target with no exclusion proof must not be accepted."""
+        manifest = acceptance_manifest()
+        target_id = manifest["targets"][0]["canonical_target_id"]
+        skipped_id = "record:r_skipped"
+        manifest["authorization"]["canonical_target_ids"].append(skipped_id)
+        manifest["reconciliation"]["authorized"].append(skipped_id)
+        manifest["reconciliation"]["inspected"].append(skipped_id)
+        manifest["reconciliation"]["skipped"].append(skipped_id)
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        set_record = manifest["evidence_records"][set_ref]
+        set_record["target_ids"].append(skipped_id)
+        set_record["requested_scope"].append(skipped_id)
+        set_record["returned_scope"].append(skipped_id)
+        set_record["witness"]["authoritative_total"] = 2
+        set_record["witness"]["unique_count"] = 2
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_skipped_targets_with_exclusion_proof_accepted(self):
+        """A skipped authorized target with a complete zero-mutation exclusion proof is accepted."""
+        manifest = acceptance_manifest()
+        target_id = manifest["targets"][0]["canonical_target_id"]
+        skipped_id = "record:r_skipped"
+        manifest["authorization"]["canonical_target_ids"].append(skipped_id)
+        for name in ("authorized", "inspected"):
+            manifest["reconciliation"][name].append(skipped_id)
+        manifest["reconciliation"]["skipped"].append(skipped_id)
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        set_record = manifest["evidence_records"][set_ref]
+        set_record["target_ids"] = [target_id, skipped_id]
+        set_record["requested_scope"] = [target_id, skipped_id]
+        set_record["returned_scope"] = [target_id, skipped_id]
+        set_record["witness"]["authoritative_total"] = 2
+        set_record["witness"]["unique_count"] = 2
+        scope_id = manifest["authorization"]["scope_id"]
+        exact_action = manifest["authorization"]["exact_action"]
+        mutation = manifest["authorization"]["mutation_id"]
+        skip_tp = "tp:skip"
+        pre_ref = "pre:skip"
+        predicate_ref = "exclusion:skip"
+        manifest["evidence_records"][skip_tp] = _transport_record(
+            [skipped_id], "bounded_list", mutation
+        )
+        manifest["evidence_records"][skip_tp]["aggregate_scope"] = scope_id
+        manifest["evidence_records"][skip_tp]["fixed_predicate"] = exact_action
+        manifest["evidence_records"][pre_ref] = {
+            "kind": "pre_state",
+            "owner": "root",
+            "authoritative": True,
+            "target_id": skipped_id,
+            "transport_ref": skip_tp,
+            "version": "ver:observed",
+            "state": "candidate",
+        }
+        manifest["evidence_records"][predicate_ref] = {
+            "kind": "exclusion",
+            "owner": "root",
+            "authoritative": True,
+            "target_id": skipped_id,
+            "eligible": False,
+            "reason_code": "predicate_miss",
+            "fixed_predicate": exact_action,
+            "pre_ref": pre_ref,
+        }
+        manifest["evidence"]["transport_proofs"].append(skip_tp)
+        manifest["evidence"]["pre"].extend([pre_ref, predicate_ref])
+        manifest["zero_mutation_proof"] = {
+            "kind": "complete_exclusions",
+            "transport_proof_ref": skip_tp,
+            "candidate_ids": [skipped_id],
+            "exclusions": {
+                skipped_id: {
+                    "reason_code": "predicate_miss",
+                    "pre_ref": pre_ref,
+                    "predicate_evidence_ref": predicate_ref,
+                }
+            },
+        }
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["terminal"]["reason_code"],
+            "all_targets_verified",
+        )
+
+    def test_out_of_scope_action_receipt_blocks_acceptance(self):
+        """An action receipt for a target outside the manifest must prevent acceptance."""
+        manifest = acceptance_manifest()
+        receipt_ref = "receipt:outside"
+        manifest["evidence"]["actions"].append(receipt_ref)
+        manifest["evidence_records"][receipt_ref] = {
+            "kind": "receipt",
+            "authoritative": True,
+            "target_id": "record:r_outside",
+            "mutation_id": manifest["authorization"]["mutation_id"],
+            "action": manifest["authorization"]["exact_action"],
+            "resulting_version": "ver:99",
+            "status": "committed",
+        }
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_unhashable_action_receipt_target_id_blocked(self):
+        """A non-string action receipt target_id must fail closed, not crash."""
+        manifest = acceptance_manifest()
+        receipt_ref = "receipt:weird"
+        manifest["evidence"]["actions"].append(receipt_ref)
+        manifest["evidence_records"][receipt_ref] = {
+            "kind": "receipt",
+            "authoritative": True,
+            "target_id": [],
+            "mutation_id": manifest["authorization"]["mutation_id"],
+            "action": manifest["authorization"]["exact_action"],
+            "resulting_version": "ver:99",
+            "status": "committed",
+        }
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_unverified_accepted_identifier_not_emitted(self):
+        """A ghost identifier in reconciliation.accepted must not appear in the normalized accepted set or counts."""
+        manifest = acceptance_manifest()
+        manifest["reconciliation"]["accepted"].append("ghost:1")
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotIn(
+            "ghost:1",
+            result["acceptance_manifest"]["reconciliation"]["accepted"],
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["reconciliation"]["derived_counts"]["accepted"],
+            1,
+        )
+
+    def test_forged_exact_action_blocks_acceptance(self):
+        """Manifest exact_action must match the canonical action for the declared family."""
+        manifest = acceptance_manifest()
+        manifest["authorization"]["exact_action"] = "forged_action"
+        for ref in manifest["evidence"]["actions"]:
+            receipt = manifest["evidence_records"].get(ref)
+            if isinstance(receipt, dict):
+                receipt["action"] = "forged_action"
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        set_record = manifest["evidence_records"].get(set_ref)
+        if isinstance(set_record, dict):
+            set_record["fixed_predicate"] = "forged_action"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_reported_failure_for_unlisted_identifier_not_erased(self):
+        """A self-reported failure for an identifier outside the target list must fail the run."""
+        manifest = acceptance_manifest()
+        manifest["reconciliation"]["failed"] = ["ghost:failed"]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "failed", "final": True},
+        )
+        self.assertIn(
+            "ghost:failed",
+            result["acceptance_manifest"]["reconciliation"]["failed"],
+        )
+
+    def test_reported_unknown_for_unlisted_identifier_not_erased(self):
+        """A self-reported unresolved outcome for an unlisted identifier must stay indeterminate."""
+        manifest = acceptance_manifest()
+        manifest["reconciliation"]["unknown"] = ["ghost:unknown"]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "indeterminate", "final": True},
+        )
+        self.assertIn(
+            "ghost:unknown",
+            result["acceptance_manifest"]["reconciliation"]["unknown"],
+        )
+
+    def test_per_target_transport_scope_and_predicate_bound(self):
+        """A per-target pre-state transport must match the authorized scope and predicate."""
+        manifest = acceptance_manifest()
+        pre_ref = manifest["targets"][0]["pre_ref"]
+        transport_ref = manifest["evidence_records"][pre_ref]["transport_ref"]
+        manifest["evidence_records"][transport_ref]["aggregate_scope"] = "scope:forged"
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+
+    def test_post_state_cannot_reuse_authorization_set_proof(self):
+        """A post-state transport must not reuse the pre-action authorized-set proof."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        set_ref = manifest["authorization"]["set_proof_ref"]
+        manifest["evidence_records"][target["post_ref"]]["transport_ref"] = set_ref
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+        self.assertIn("acceptance_manifest", result)
+
+    def test_acceptance_manifest_failure_surfaces_when_replan_pending(self):
+        """A manifest failure must be evaluated even when a runtime replan is pending."""
+        manifest = contradict_family(acceptance_manifest())
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        events = [
+            {"type": "decision_loop_discovered", "path": "repo/root"}
+        ]
+        result = evaluate_root_workflow(md, events)
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "failed", "final": True},
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["terminal"]["reason_code"],
+            "authoritative_or_process_failure",
+        )
+
+    def test_post_state_transport_ref_non_string_fail_closed(self):
+        """A post-state transport_ref that is not a string must not crash the evaluator."""
+        manifest = acceptance_manifest()
+        target = manifest["targets"][0]
+        manifest["evidence_records"][target["post_ref"]]["transport_ref"] = []
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertNotEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+        self.assertTrue(result["workflow_state"]["final"])
+        self.assertIn("acceptance_manifest", result)
+
+    def test_failed_manifest_surfaces_despite_preflight_defect(self):
+        """A manifest that derives failed must not be discarded by an unrelated preflight defect."""
+        manifest = contradict_family(acceptance_manifest())
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        md["authority_preflight"]["evidence"] = [""]
+        result = evaluate_root_workflow(md)
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "failed", "final": True},
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["terminal"]["reason_code"],
+            "authoritative_or_process_failure",
+        )
+
+    def test_accepted_manifest_downgraded_with_preflight_defect(self):
+        """A valid accepted manifest must be blocked when an authority preflight defect exists."""
+        manifest = acceptance_manifest()
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        md["authority_preflight"]["evidence"] = [""]
+        result = evaluate_root_workflow(md)
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "blocked", "final": True},
+        )
+        self.assertEqual(
+            result["acceptance_manifest"]["terminal"]["reason_code"],
+            "pre_action_evidence_gap",
+        )
+
+    def test_human_decision_preserved_with_accepted_manifest(self):
+        """A pending human decision remains non-final when a manifest is supplied."""
+        manifest = acceptance_manifest()
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(
+            md, [{"type": "human_decision_required", "path": "approval"}]
+        )
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "human_decision_required", "final": False},
+        )
+
+    def test_zero_numeric_evidence_accepted(self):
+        """Numeric evidence fields whose value is zero must not be treated as absent."""
+        manifest = family_manifest("create_append")
+        target = manifest["targets"][0]
+        receipt_ref = target["receipt_ref"]
+        post_ref = target["post_ref"]
+        manifest["evidence_records"][receipt_ref]["commit_sequence"] = 0
+        manifest["evidence_records"][post_ref]["commit_sequence"] = 0
+        target["ordering_proof"]["values"] = [0, 0]
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(md)
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "accepted", "final": True},
+        )
+
+    def test_runtime_replan_with_accepted_manifest_is_non_final(self):
+        """A pending runtime replan must keep the workflow non-final even with a manifest."""
+        manifest = acceptance_manifest()
+        md = metadata()
+        md["acceptance_manifest"] = manifest
+        result = evaluate_root_workflow(
+            md, [{"type": "decision_loop_discovered", "path": "repo/root"}]
+        )
+        self.assertIn("acceptance_manifest", result)
+        self.assertEqual(
+            result["authority_preflight"]["status"],
+            "runtime_replan",
+        )
+        self.assertEqual(
+            result["authority_preflight"]["required_action"],
+            "root_l0_plan",
+        )
+        self.assertEqual(
+            result["workflow_state"],
+            {"state": "continue", "final": False},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
